@@ -4,11 +4,11 @@
     using Microsoft.AspNetCore.Authentication;
     using Microsoft.AspNetCore.Authentication.OpenIdConnect;
     using Microsoft.AspNetCore.Mvc;
-    using Microsoft.Marketplace.SaasKit.Client.Models;
-    using Microsoft.Marketplace.SaasKit.Client.Utilities;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Models;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Utilities;
 
     /// <summary>
-    ///  Sets a BaseController
+    ///  Sets a BaseController.
     /// </summary>
     /// <seealso cref="Microsoft.AspNetCore.Mvc.Controller" />
     public class BaseController : Controller
@@ -22,34 +22,40 @@
         }
 
         /// <summary>
-        /// Gets Current Logged in User Email Address
+        /// Gets Current Logged in User Email Address.
         /// </summary>
         /// <value>
         /// The current user email address.
         /// </value>
         public string CurrentUserEmailAddress
         {
-            get { return (this.HttpContext != null && this.HttpContext.User.Claims.Count() > 0) ? this.HttpContext.User.Claims.Where(s => s.Type == WebConstants.CLAIM_EMAILADDRESS).FirstOrDefault().Value : string.Empty; }
+            get
+            {
+                return HttpContext?.User?.Claims?.FirstOrDefault(s => s.Type == ClaimConstants.CLAIM_EMAILADDRESS)?.Value ?? string.Empty; 
+            }
         }
 
         /// <summary>
-        /// Gets Current Logged in User Name
+        /// Gets Current Logged in User Name.
         /// </summary>
         /// <value>
         /// The name of the current user.
         /// </value>
         public string CurrentUserName
         {
-            get { return (this.HttpContext != null && this.HttpContext.User.Claims.Count() > 0) ? this.HttpContext.User.Claims.Where(s => s.Type == WebConstants.CLAIM_NAME).FirstOrDefault().Value : string.Empty; }
+            get
+            {
+                return HttpContext?.User?.Claims?.FirstOrDefault(s => s.Type == ClaimConstants.CLAIM_NAME)?.Value ?? string.Empty;
+            }
         }
 
         /// <summary>
-        /// Get Current Logged in User Email Address
+        /// Get Current Logged in User Email Address.
         /// </summary>
-        /// <returns> Current Logged User Email</returns>
+        /// <returns> Current Logged User Email.</returns>
         public PartnerDetailViewModel GetCurrentUserDetail()
         {
-            if (this.HttpContext != null && this.HttpContext.User.Identity.IsAuthenticated)
+            if (HttpContext?.User?.Identity?.IsAuthenticated == true)
             {
                 PartnerDetailViewModel partnerDetail = new PartnerDetailViewModel();
                 partnerDetail.FullName = this.CurrentUserName;
@@ -63,7 +69,9 @@
         /// <summary>
         /// Checks the authentication.
         /// </summary>
-        /// <returns> Check authentication</returns>
+        /// <returns>
+        /// Check authentication.
+        /// </returns>
         public IActionResult CheckAuthentication()
         {
             if (this.HttpContext == null || !this.HttpContext.User.Identity.IsAuthenticated)

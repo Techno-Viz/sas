@@ -1,5 +1,9 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See LICENSE file in the project root for license information.
 namespace Microsoft.Marketplace.Saas.Web
 {
+    using global::Azure.Identity;
+    using Microsoft.AspNetCore.Authentication;
     using Microsoft.AspNetCore.Authentication.Cookies;
     using Microsoft.AspNetCore.Authentication.OpenIdConnect;
     using Microsoft.AspNetCore.Builder;
@@ -10,18 +14,20 @@ namespace Microsoft.Marketplace.Saas.Web
     using Microsoft.Extensions.Configuration;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.Hosting;
+    using Microsoft.Extensions.Logging;
     using Microsoft.IdentityModel.Protocols.OpenIdConnect;
-    using Microsoft.Marketplace.Saas.Web.Utlities;
+    using Microsoft.Marketplace.Metering;
+    using Microsoft.Marketplace.SaaS;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Configurations;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Contracts;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Models;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Services;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Utilities;
     using Microsoft.Marketplace.SaasKit.Client.DataAccess.Context;
     using Microsoft.Marketplace.SaasKit.Client.DataAccess.Contracts;
     using Microsoft.Marketplace.SaasKit.Client.DataAccess.Services;
-    using Microsoft.Marketplace.SaasKit.Configurations;
-    using Microsoft.Marketplace.SaasKit.Contracts;
-    using Microsoft.Marketplace.SaasKit.Services;
-    using Microsoft.Marketplace.SaaS.SDK.PublisherSolution.Utilities;
-
     /// <summary>
-    /// Startup
+    /// Startup.
     /// </summary>
     public class Startup
     {
@@ -31,7 +37,7 @@ namespace Microsoft.Marketplace.Saas.Web
         /// <param name="configuration">The configuration.</param>
         public Startup(IConfiguration configuration)
         {
-            Configuration = configuration;
+            this.Configuration = configuration;
         }
 
         /// <summary>
@@ -42,13 +48,18 @@ namespace Microsoft.Marketplace.Saas.Web
         /// </value>
         public IConfiguration Configuration { get; }
 
-        // This method gets called by the runtime. Use this method to add services to the container.
         /// <summary>
         /// Configures the services.
         /// </summary>
         /// <param name="services">The services.</param>
         public void ConfigureServices(IServiceCollection services)
         {
+            var loggerFactory = LoggerFactory.Create(builder =>
+            {
+                builder
+                    .AddConsole();
+            });
+
             services.Configure<CookiePolicyOptions>(options =>
             {
                 // This lambda determines whether user consent for non-essential cookies is needed for a given request.
@@ -62,71 +73,63 @@ namespace Microsoft.Marketplace.Saas.Web
                 ClientId = this.Configuration["SaaSApiConfiguration:ClientId"],
                 ClientSecret = this.Configuration["SaaSApiConfiguration:ClientSecret"],
                 FulFillmentAPIBaseURL = this.Configuration["SaaSApiConfiguration:FulFillmentAPIBaseURL"],
+                MTClientId = this.Configuration["SaaSApiConfiguration:MTClientId"],
                 FulFillmentAPIVersion = this.Configuration["SaaSApiConfiguration:FulFillmentAPIVersion"],
                 GrantType = this.Configuration["SaaSApiConfiguration:GrantType"],
                 Resource = this.Configuration["SaaSApiConfiguration:Resource"],
                 SaaSAppUrl = this.Configuration["SaaSApiConfiguration:SaaSAppUrl"],
                 SignedOutRedirectUri = this.Configuration["SaaSApiConfiguration:SignedOutRedirectUri"],
-                TenantId = this.Configuration["SaaSApiConfiguration:TenantId"]
+                TenantId = this.Configuration["SaaSApiConfiguration:TenantId"],
             };
-
-            services.AddAuthentication(options =>
+            var knownUsers = new KnownUsersModel()
             {
-                options.DefaultAuthenticateScheme = OpenIdConnectDefaults.AuthenticationScheme;
-                options.DefaultSignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-                options.DefaultChallengeScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-            })
-            ///OPEN ID Authentication
-   .AddOpenIdConnect(options =>
-   {
-       options.Authority = $"{config.AdAuthenticationEndPoint}/common";
-       options.ClientId = config.ClientId;
-       options.ResponseType = OpenIdConnectResponseType.IdToken;
-       options.CallbackPath = "/Home/Index";
-       options.SignedOutRedirectUri = config.SignedOutRedirectUri;
-       options.TokenValidationParameters.NameClaimType = "name";
-       options.TokenValidationParameters.ValidateIssuer = false;
-   })
-   .AddCookie();
+                KnownUsers = this.Configuration["KnownUsers"],
+            };
+            var creds = new ClientSecretCredential(config.TenantId.ToString(), config.ClientId.ToString(), config.ClientSecret);
 
-            services.AddSingleton<IFulfillmentApiClient>(new FulfillmentApiClient(config, new FulfillmentApiClientLogger()));
-            services.AddSingleton<IMeteredBillingApiClient>(new MeteredBillingApiClient(config, new MeteringApiClientLogger()));
-            services.AddSingleton<SaaSApiClientConfiguration>(config);
 
-            services.AddDbContext<SaasKitContext>(options =>
-               options.UseSqlServer(Configuration.GetConnectionString("DefaultConnection")));
+            services
+                .AddAuthentication(options =>
+                {
+                    options.DefaultAuthenticateScheme = OpenIdConnectDefaults.AuthenticationScheme;
+                    options.DefaultSignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+                    options.DefaultChallengeScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+                })
+                .AddOpenIdConnect(options =>
+                {
+                    options.Authority = $"{config.AdAuthenticationEndPoint}/common/v2.0";
+                    options.ClientId = config.MTClientId;
+                    options.ResponseType = OpenIdConnectResponseType.IdToken;
+                    options.CallbackPath = "/Home/Index";
+                    options.SignedOutRedirectUri = config.SignedOutRedirectUri;
+                    options.TokenValidationParameters.NameClaimType = "name";
+                    options.TokenValidationParameters.ValidateIssuer = false;
+                })
+                .AddCookie();
+
+            services
+                .AddTransient<IClaimsTransformation, CustomClaimsTransformation>();
+
+            services
+                .AddSingleton<IFulfillmentApiService>(new FulfillmentApiService(new MarketplaceSaaSClient(creds), config, new FulfillmentApiClientLogger()))
+                .AddSingleton<IMeteredBillingApiService>(new MeteredBillingApiService(new MarketplaceMeteringClient(creds), config, new MeteringApiClientLogger()))
+                .AddSingleton<SaaSApiClientConfiguration>(config)
+                .AddSingleton<KnownUsersModel>(knownUsers);
+
+            services
+                .AddDbContext<SaasKitContext>(options => options.UseSqlServer(this.Configuration.GetConnectionString("DefaultConnection")));
+
 
             InitializeRepositoryServices(services);
 
-            services.AddMvc().SetCompatibilityVersion(CompatibilityVersion.Version_3_0);
             services.AddMvc(option => option.EnableEndpointRouting = false);
-
-            // Add our Config object so it can be injected
-
             services.AddControllersWithViews();
+
+            services.Configure<CookieTempDataProviderOptions>(options => {
+                options.Cookie.IsEssential = true;
+            });
         }
 
-        /// <summary>
-        /// Initializes the repository services.
-        /// </summary>
-        /// <param name="services">The services.</param>
-        private static void InitializeRepositoryServices(IServiceCollection services)
-        {
-            services.AddScoped<ISubscriptionsRepository, SubscriptionsRepository>();
-            services.AddScoped<IPlansRepository, PlansRepository>();
-            services.AddScoped<IUsersRepository, UsersRepository>();
-            services.AddScoped<ISubscriptionLogRepository, SubscriptionLogRepository>();
-            services.AddScoped<IApplicationConfigRepository, ApplicationConfigRepository>();
-            services.AddScoped<IApplicationLogRepository, ApplicationLogRepository>();
-            services.AddScoped<ISubscriptionUsageLogsRepository, SubscriptionUsageLogsRepository>();
-            services.AddScoped<IMeteredDimensionsRepository, MeteredDimensionsRepository>();
-            services.AddScoped<ISubscriptionLicensesRepository, SubscriptionLicensesRepository>();
-            services.AddScoped<IKnownUsersRepository, KnownUsersRepository>();
-            services.AddScoped<IEmailTemplateRepository, EmailTemplateRepository>();
-            services.AddScoped<KnownUser>();
-        }
-
-        // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
         /// <summary>
         /// Configures the specified application.
         /// </summary>
@@ -136,7 +139,7 @@ namespace Microsoft.Marketplace.Saas.Web
         {
             if (env.IsDevelopment())
             {
-                app.UseExceptionHandler("/Home/Error");
+                app.UseDeveloperExceptionPage();
             }
             else
             {
@@ -154,6 +157,31 @@ namespace Microsoft.Marketplace.Saas.Web
                     name: "default",
                     template: "{controller=Home}/{action=Index}/{id?}");
             });
+        }
+
+        /// <summary>
+        /// Initializes the repository services.
+        /// </summary>
+        /// <param name="services">The services.</param>
+        private static void InitializeRepositoryServices(IServiceCollection services)
+        {
+            services.AddScoped<ISubscriptionsRepository, SubscriptionsRepository>();
+            services.AddScoped<IPlansRepository, PlansRepository>();
+            services.AddScoped<IUsersRepository, UsersRepository>();
+            services.AddScoped<ISubscriptionLogRepository, SubscriptionLogRepository>();
+            services.AddScoped<IApplicationConfigRepository, ApplicationConfigRepository>();
+            services.AddScoped<IApplicationLogRepository, ApplicationLogRepository>();
+            services.AddScoped<ISubscriptionUsageLogsRepository, SubscriptionUsageLogsRepository>();
+            services.AddScoped<IMeteredDimensionsRepository, MeteredDimensionsRepository>();
+            services.AddScoped<IKnownUsersRepository, KnownUsersRepository>();
+            services.AddScoped<IOffersRepository, OffersRepository>();
+            services.AddScoped<IValueTypesRepository, ValueTypesRepository>();
+            services.AddScoped<IOfferAttributesRepository, OfferAttributesRepository>();
+            services.AddScoped<IEmailTemplateRepository, EmailTemplateRepository>();
+            services.AddScoped<IPlanEventsMappingRepository, PlanEventsMappingRepository>();
+            services.AddScoped<IEventsRepository, EventsRepository>();
+            services.AddScoped<KnownUserAttribute>();
+            services.AddScoped<IEmailService, SMTPEmailService>();
         }
     }
 }

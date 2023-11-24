@@ -1,13 +1,16 @@
-﻿namespace Microsoft.Marketplace.SaasKit.Client.Controllers.WebHook
+﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See LICENSE file in the project root for license information.
+namespace Microsoft.Marketplace.SaasKit.Client.Controllers.WebHook
 {
+    using System.Text.Json;
     using Microsoft.AspNetCore.Mvc;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Services;
     using Microsoft.Marketplace.SaasKit.Client.DataAccess.Contracts;
-    using Microsoft.Marketplace.SaasKit.Client.Services;
-    using Microsoft.Marketplace.SaasKit.WebHook;
-    using Newtonsoft.Json;
+    using Microsoft.Marketplace.SaaS.SDK.Services.WebHook;
+    using System.Threading.Tasks;
 
     /// <summary>
-    /// Azure Web hook
+    /// Azure Web hook.
     /// </summary>
     /// <seealso cref="Microsoft.AspNetCore.Mvc.ControllerBase" />
     [Route("api/[controller]")]
@@ -15,37 +18,37 @@
     public class AzureWebhookController : ControllerBase
     {
         /// <summary>
-        /// The application log repository
+        /// The application log repository.
         /// </summary>
         private readonly IApplicationLogRepository applicationLogRepository;
 
         /// <summary>
-        /// The subscriptions repository
+        /// The subscriptions repository.
         /// </summary>
         private readonly ISubscriptionsRepository subscriptionsRepository;
 
         /// <summary>
-        /// The plan repository
+        /// The plan repository.
         /// </summary>
         private readonly IPlansRepository planRepository;
 
         /// <summary>
-        /// The subscriptions log repository
+        /// The subscriptions log repository.
         /// </summary>
         private readonly ISubscriptionLogRepository subscriptionsLogRepository;
 
         /// <summary>
-        /// The web hook processor
+        /// The web hook processor.
         /// </summary>
         private readonly IWebhookProcessor webhookProcessor;
 
         /// <summary>
-        /// The application log service
+        /// The application log service.
         /// </summary>
         private readonly ApplicationLogService applicationLogService;
 
         /// <summary>
-        /// The subscription service
+        /// The subscription service.
         /// </summary>
         private readonly SubscriptionService subscriptionService;
 
@@ -72,14 +75,14 @@
         /// Posts the specified request.
         /// </summary>
         /// <param name="request">The request.</param>
-        public async void Post(WebhookPayload request)
+        public async Task Post(WebhookPayload request)
         {
-            this.applicationLogService.AddApplicationLog("The azure Webhook Triggered.");
+            await this.applicationLogService.AddApplicationLog("The azure Webhook Triggered.").ConfigureAwait(false);
 
             if (request != null)
             {
-                var json = JsonConvert.SerializeObject(request);
-                this.applicationLogService.AddApplicationLog("Webhook Serialize Object " + json);
+                var json = JsonSerializer.Serialize(request);
+                await this.applicationLogService.AddApplicationLog("Webhook Serialize Object " + json).ConfigureAwait(false);
                 await this.webhookProcessor.ProcessWebhookNotificationAsync(request).ConfigureAwait(false);
             }
         }

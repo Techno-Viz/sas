@@ -1,185 +1,251 @@
-﻿namespace Microsoft.Marketplace.Saas.Web.Controllers
+﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See LICENSE file in the project root for license information.
+namespace Microsoft.Marketplace.Saas.Web.Controllers
 {
     using System;
     using System.Collections.Generic;
-    using System.Diagnostics;
     using System.Linq;
-    using System.Text.Json.Serialization;
+    using System.Text.Json;
     using System.Threading.Tasks;
     using Microsoft.AspNetCore.Diagnostics;
     using Microsoft.AspNetCore.Mvc;
     using Microsoft.AspNetCore.Mvc.Rendering;
     using Microsoft.Extensions.Logging;
-    using Microsoft.Marketplace.Saas.Web.Models;
-    using Microsoft.Marketplace.Saas.Web.Services;
-    using Microsoft.Marketplace.SaaS.SDK.PublisherSolution.Utilities;
+    using Microsoft.Extensions.Options;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Configurations;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Contracts;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Exceptions;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Models;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Services;
+    using Microsoft.Marketplace.SaaS.SDK.Services.StatusHandlers;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Utilities;
     using Microsoft.Marketplace.SaasKit.Client.DataAccess.Contracts;
     using Microsoft.Marketplace.SaasKit.Client.DataAccess.Entities;
-    using Microsoft.Marketplace.SaasKit.Web.Helpers;
-    using Microsoft.Marketplace.SaasKit.Client.Models;
-    using Microsoft.Marketplace.SaasKit.Client.Services;
-    using Microsoft.Marketplace.SaasKit.Contracts;
-    using Microsoft.Marketplace.SaasKit.Exceptions;
-    using Microsoft.Marketplace.SaasKit.Models;
-    using Newtonsoft.Json;
 
-    [ServiceFilter(typeof(KnownUser))]
     /// <summary>
-    /// Home Controller
+    /// Home Controller.
     /// </summary>
     /// <seealso cref="Microsoft.Marketplace.Saas.Web.Controllers.BaseController" />
+    [ServiceFilter(typeof(KnownUserAttribute))]
     public class HomeController : BaseController
     {
         /// <summary>
-        /// The logger
+        /// The logger.
         /// </summary>
         private readonly ILogger<HomeController> logger;
 
         /// <summary>
-        /// The subscription repository
+        /// The subscription repository.
         /// </summary>
         private readonly ISubscriptionsRepository subscriptionRepo;
 
         /// <summary>
-        /// The subscription logs repository
+        /// The subscription logs repository.
         /// </summary>
         private readonly ISubscriptionLogRepository subscriptionLogRepository;
 
         /// <summary>
-        /// The plan repository
+        /// The plan repository.
         /// </summary>
         private readonly IPlansRepository planRepository;
 
-
         /// <summary>
-        /// The Metered Dimension repository
+        /// The Metered Dimension repository.
         /// </summary>
         private readonly IMeteredDimensionsRepository dimensionsRepository;
 
         /// <summary>
-        /// The subscription usage logs repository
+        /// The subscription usage logs repository.
         /// </summary>
         private readonly ISubscriptionUsageLogsRepository subscriptionUsageLogsRepository;
 
         /// <summary>
-        /// The users repository
+        /// The users repository.
         /// </summary>
         private readonly IUsersRepository userRepository;
 
-        private readonly IUsersRepository usersRepository;
-
-        private readonly IFulfillmentApiClient fulfillApiClient;
-
-        private UserService userService;
-
-        private WebSubscriptionService webSubscriptionService = null;
+        private readonly IFulfillmentApiService fulfillApiService;
 
         private readonly IApplicationLogRepository applicationLogRepository;
 
-        /// <summary>
-        /// Defines the  API Client
-        /// </summary>
-        private readonly IMeteredBillingApiClient apiClient;
+        private readonly IMeteredBillingApiService billingApiService;
 
         private readonly IApplicationConfigRepository applicationConfigRepository;
-
-        private ApplicationLogService applicationLogService = null;
-
-        private SubscriptionService subscriptionService = null;
 
         private readonly ISubscriptionsRepository subscriptionRepository;
 
         private readonly IEmailTemplateRepository emailTemplateRepository;
 
+        private readonly IPlanEventsMappingRepository planEventsMappingRepository;
 
+        private readonly IEventsRepository eventsRepository;
+
+        private readonly IEmailService emailService;
+
+        private readonly ISubscriptionStatusHandler pendingFulfillmentStatusHandlers;
+
+        private readonly ISubscriptionStatusHandler pendingActivationStatusHandlers;
+
+        private readonly ISubscriptionStatusHandler unsubscribeStatusHandlers;
+
+        private readonly ISubscriptionStatusHandler notificationStatusHandlers;
+
+        private readonly ILoggerFactory loggerFactory;
+
+        private readonly IOffersRepository offersRepository;
+
+        private readonly IOfferAttributesRepository offersAttributeRepository;
+
+        private readonly ApplicationConfigService applicationConfigService;
+
+        private UserService userService;
+
+        private SubscriptionService subscriptionService = null;
+
+        private ApplicationLogService applicationLogService = null;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="HomeController" /> class.
         /// </summary>
-        /// <param name="UsersRepository">The users repository.</param>
-        /// <param name="apiClient">The API client.</param>
+        /// <param name="usersRepository">The users repository.</param>
+        /// <param name="billingApiService">The billing API service.</param>
         /// <param name="logger">The logger.</param>
-        /// <param name="SubscriptionRepo">The subscription repo.</param>
-        /// <param name="PlanRepository">The plan repository.</param>
-        /// <param name="SubscriptionUsageLogsRepository">The subscription usage logs repository.</param>
-        public HomeController(IUsersRepository UsersRepository, IMeteredBillingApiClient apiClient, ILogger<HomeController> logger, ISubscriptionsRepository SubscriptionRepo,
-                                IPlansRepository PlanRepository, ISubscriptionUsageLogsRepository SubscriptionUsageLogsRepository,
-                                    IMeteredDimensionsRepository DimensionsRepository, ISubscriptionLogRepository subscriptionLogsRepo, IApplicationConfigRepository applicationConfigRepository, IUsersRepository userRepository, IFulfillmentApiClient fulfillApiClient, IApplicationLogRepository applicationLogRepository, IEmailTemplateRepository emailTemplateRepository)
+        /// <param name="subscriptionRepo">The subscription repo.</param>
+        /// <param name="planRepository">The plan repository.</param>
+        /// <param name="subscriptionUsageLogsRepository">The subscription usage logs repository.</param>
+        /// <param name="dimensionsRepository">The dimensions repository.</param>
+        /// <param name="subscriptionLogsRepo">The subscription logs repo.</param>
+        /// <param name="applicationConfigRepository">The application configuration repository.</param>
+        /// <param name="userRepository">The user repository.</param>
+        /// <param name="fulfillApiService">The fulfill API client.</param>
+        /// <param name="applicationLogRepository">The application log repository.</param>
+        /// <param name="emailTemplateRepository">The email template repository.</param>
+        /// <param name="planEventsMappingRepository">The plan events mapping repository.</param>
+        /// <param name="eventsRepository">The events repository.</param>
+        /// <param name="options">The options.</param>
+        /// <param name="cloudConfigs">The cloud configs.</param>
+        /// <param name="loggerFactory">The logger factory.</param>
+        /// <param name="emailService">The email service.</param>
+        /// <param name="offersRepository">The offers repository.</param>
+        /// <param name="offersAttributeRepository">The offers attribute repository.</param>
+        public HomeController(
+                        IUsersRepository usersRepository, IMeteredBillingApiService billingApiService, ILogger<HomeController> logger, ISubscriptionsRepository subscriptionRepo, IPlansRepository planRepository, ISubscriptionUsageLogsRepository subscriptionUsageLogsRepository, IMeteredDimensionsRepository dimensionsRepository, ISubscriptionLogRepository subscriptionLogsRepo, IApplicationConfigRepository applicationConfigRepository, IUsersRepository userRepository, IFulfillmentApiService fulfillApiService, IApplicationLogRepository applicationLogRepository, IEmailTemplateRepository emailTemplateRepository, IPlanEventsMappingRepository planEventsMappingRepository, IEventsRepository eventsRepository, IOptions<SaaSApiClientConfiguration> options, ILoggerFactory loggerFactory, IEmailService emailService, IOffersRepository offersRepository, IOfferAttributesRepository offersAttributeRepository)
         {
-            this.apiClient = apiClient;
-            subscriptionRepo = SubscriptionRepo;
+            this.billingApiService = billingApiService;
+            this.subscriptionRepo = subscriptionRepo;
             this.subscriptionLogRepository = subscriptionLogsRepo;
-            planRepository = PlanRepository;
-            subscriptionUsageLogsRepository = SubscriptionUsageLogsRepository;
-            dimensionsRepository = DimensionsRepository;
+            this.planRepository = planRepository;
+            this.subscriptionUsageLogsRepository = subscriptionUsageLogsRepository;
+            this.dimensionsRepository = dimensionsRepository;
             this.logger = logger;
             this.applicationConfigRepository = applicationConfigRepository;
-            usersRepository = UsersRepository;
+            this.applicationConfigService = new ApplicationConfigService(this.applicationConfigRepository);
             this.userRepository = userRepository;
             this.userService = new UserService(userRepository);
-            this.fulfillApiClient = fulfillApiClient;
-            webSubscriptionService = new WebSubscriptionService(this.subscriptionRepo, this.planRepository);
+            this.fulfillApiService = fulfillApiService;
             this.applicationLogRepository = applicationLogRepository;
             this.applicationLogService = new ApplicationLogService(this.applicationLogRepository);
-            this.applicationConfigRepository = applicationConfigRepository;
-            this.subscriptionRepository = subscriptionRepo;
+            this.subscriptionRepository = this.subscriptionRepo;
             this.subscriptionService = new SubscriptionService(this.subscriptionRepository, this.planRepository);
             this.emailTemplateRepository = emailTemplateRepository;
+            this.planEventsMappingRepository = planEventsMappingRepository;
+            this.eventsRepository = eventsRepository;
+            this.emailService = emailService;
+            this.offersRepository = offersRepository;
+            this.offersAttributeRepository = offersAttributeRepository;
+            this.loggerFactory = loggerFactory;
+
+            this.pendingActivationStatusHandlers = new PendingActivationStatusHandler(
+                                                                          fulfillApiService,
+                                                                          subscriptionRepo,
+                                                                          subscriptionLogsRepo,
+                                                                          planRepository,
+                                                                          userRepository,
+                                                                          loggerFactory.CreateLogger<PendingActivationStatusHandler>());
+
+            this.pendingFulfillmentStatusHandlers = new PendingFulfillmentStatusHandler(
+                                                                           fulfillApiService,
+                                                                           applicationConfigRepository,
+                                                                           subscriptionRepo,
+                                                                           subscriptionLogsRepo,
+                                                                           planRepository,
+                                                                           userRepository,
+                                                                           this.loggerFactory.CreateLogger<PendingFulfillmentStatusHandler>());
+
+            this.notificationStatusHandlers = new NotificationStatusHandler(
+                                                                        fulfillApiService,
+                                                                        planRepository,
+                                                                        applicationConfigRepository,
+                                                                        emailTemplateRepository,
+                                                                        planEventsMappingRepository,
+                                                                        offersAttributeRepository,
+                                                                        eventsRepository,
+                                                                        subscriptionRepo,
+                                                                        userRepository,
+                                                                        offersRepository,
+                                                                        emailService,
+                                                                        this.loggerFactory.CreateLogger<NotificationStatusHandler>());
+
+            this.unsubscribeStatusHandlers = new UnsubscribeStatusHandler(
+                                                                        fulfillApiService,
+                                                                        subscriptionRepo,
+                                                                        subscriptionLogsRepo,
+                                                                        planRepository,
+                                                                        userRepository,
+                                                                        this.loggerFactory.CreateLogger<UnsubscribeStatusHandler>());
         }
 
         /// <summary>
         /// Indexes this instance.
         /// </summary>
-        /// <returns></returns>
+        /// <returns> The <see cref="IActionResult" />.</returns>
         public IActionResult Index()
         {
             this.logger.LogInformation("Home Controller / Index ");
             try
             {
-                if (Convert.ToBoolean(applicationConfigRepository.GetValuefromApplicationConfig(MainMenuStatusEnum.IsLicenseManagementEnabled.ToString())) == true)
-                {
-                    this.TempData["ShowLicensesMenu"] = true;
-                }
-                return View();
+                this.applicationConfigService.SaveFileToDisk("LogoFile", "contoso-sales.png");
+                this.applicationConfigService.SaveFileToDisk("FaviconFile", "favicon.ico");
+
+                var userId = this.userService.AddUser(this.GetCurrentUserDetail());
+                return this.View();
             }
             catch (Exception ex)
             {
                 this.logger.LogError("Message:{0} :: {1}   ", ex.Message, ex.InnerException);
-                return View("Error");
+                return this.View("Error", ex);
             }
         }
 
         /// <summary>
         /// Subscriptionses this instance.
         /// </summary>
-        /// <returns></returns>
+        /// <returns> The <see cref="IActionResult" />.</returns>
         public IActionResult Subscriptions()
         {
             this.logger.LogInformation("Home Controller / Subscriptions ");
             try
             {
-                if (Convert.ToBoolean(applicationConfigRepository.GetValuefromApplicationConfig(MainMenuStatusEnum.IsLicenseManagementEnabled.ToString())) == true)
-                {
-                    this.TempData["ShowLicensesMenu"] = true;
-                }
                 SubscriptionViewModel subscriptionDetail = new SubscriptionViewModel();
-                if (User.Identity.IsAuthenticated)
+                if (this.User.Identity.IsAuthenticated)
                 {
                     this.TempData["ShowWelcomeScreen"] = "True";
 
-                List<SubscriptionResultExtension> allSubscriptions = new List<SubscriptionResultExtension>();
-                var allSubscriptionDetails = subscriptionRepo.Get().ToList();
-                var allPlans = planRepository.Get().ToList();
-                foreach (var subscription in allSubscriptionDetails)
-                {
-                    SubscriptionResultExtension subscritpionDetail = PrepareSubscriptionResponse(subscription, allPlans);
-                    Plans PlanDetail = this.planRepository.GetPlanDetailByPlanId(subscritpionDetail.PlanId);
-                    subscritpionDetail.IsPerUserPlan = PlanDetail.IsPerUser.HasValue ? PlanDetail.IsPerUser.Value : false;
-                    subscriptionDetail.IsAutomaticProvisioningSupported = Convert.ToBoolean(applicationConfigRepository.GetValuefromApplicationConfig("IsAutomaticProvisioningSupported"));
-                    if (subscritpionDetail != null && subscritpionDetail.SubscribeId > 0)
-                        allSubscriptions.Add(subscritpionDetail);
-                }
-                subscriptionDetail.Subscriptions = allSubscriptions;
+                    List<SubscriptionResultExtension> allSubscriptions = new List<SubscriptionResultExtension>();
+                    var allSubscriptionDetails = this.subscriptionRepo.Get().ToList();
+                    var allPlans = this.planRepository.Get().ToList();
+                    foreach (var subscription in allSubscriptionDetails)
+                    {
+                        SubscriptionResultExtension subscriptionDetailExtension = this.subscriptionService.PrepareSubscriptionResponse(subscription);
+                        Plans planDetail = this.planRepository.GetById(subscriptionDetailExtension.PlanId);
+                        subscriptionDetailExtension.IsPerUserPlan = planDetail.IsPerUser.HasValue ? planDetail.IsPerUser.Value : false;
+                        if (subscriptionDetailExtension != null && subscriptionDetailExtension.SubscribeId > 0)
+                        {
+                            allSubscriptions.Add(subscriptionDetailExtension);
+                        }
+                    }
+
+                    subscriptionDetail.Subscriptions = allSubscriptions;
 
                     if (this.TempData["ErrorMsg"] != null)
                     {
@@ -189,14 +255,15 @@
                 }
                 else
                 {
-                    return RedirectToAction(nameof(Index));
+                    return this.RedirectToAction(nameof(this.Index));
                 }
+
                 return this.View(subscriptionDetail);
             }
             catch (Exception ex)
             {
-                logger.LogError("Message:{0} :: {1}   ", ex.Message, ex.InnerException);
-                return View("Error");
+                this.logger.LogError("Message:{0} :: {1}   ", ex.Message, ex.InnerException);
+                return this.View("Error", ex);
             }
         }
 
@@ -204,17 +271,15 @@
         /// Subscriptions the log detail.
         /// </summary>
         /// <param name="subscriptionId">The subscription identifier.</param>
-        /// <returns> Subscription log detail</returns>
+        /// <returns>
+        /// Subscription log detail.
+        /// </returns>
         public IActionResult SubscriptionLogDetail(Guid subscriptionId)
         {
-            this.logger.LogInformation("Home Controller / RecordUsage : subscriptionId: {0}", JsonConvert.SerializeObject(subscriptionId));
+            this.logger.LogInformation("Home Controller / RecordUsage : subscriptionId: {0}", JsonSerializer.Serialize(subscriptionId));
             try
             {
-                if (Convert.ToBoolean(applicationConfigRepository.GetValuefromApplicationConfig(MainMenuStatusEnum.IsLicenseManagementEnabled.ToString())) == true)
-                {
-                    this.TempData["ShowLicensesMenu"] = true;
-                }
-                if (User.Identity.IsAuthenticated)
+                if (this.User.Identity.IsAuthenticated)
                 {
                     List<SubscriptionAuditLogs> subscriptionAudit = new List<SubscriptionAuditLogs>();
                     subscriptionAudit = this.subscriptionLogRepository.GetSubscriptionBySubscriptionId(subscriptionId).ToList();
@@ -222,51 +287,236 @@
                 }
                 else
                 {
-                    return RedirectToAction(nameof(Index));
+                    return this.RedirectToAction(nameof(this.Index));
                 }
             }
             catch (Exception ex)
             {
                 this.logger.LogInformation("Message:{0} :: {1}   ", ex.Message, ex.InnerException);
-                return View("Error");
+                return this.View("Error", ex);
             }
         }
 
+        /// <summary>
+        /// Subscriptions the details.
+        /// </summary>
+        /// <param name="subscriptionId">The subscription identifier.</param>
+        /// <param name="planId">The plan identifier.</param>
+        /// <returns> The <see cref="IActionResult" />.</returns>
+        public IActionResult SubscriptionDetails(Guid subscriptionId, string planId)
+        {
+            this.logger.LogInformation("Home Controller / ActivateSubscription subscriptionId:{0} :: planId:{1}", subscriptionId, planId);
+            SubscriptionResultExtension subscriptionDetail = new SubscriptionResultExtension();
+
+            if (this.User.Identity.IsAuthenticated)
+            {
+                var userId = this.userService.AddUser(this.GetCurrentUserDetail());
+                var currentUserId = this.userService.GetUserIdFromEmailAddress(this.CurrentUserEmailAddress);
+                this.subscriptionService = new SubscriptionService(this.subscriptionRepo, this.planRepository, userId);
+                this.logger.LogInformation("User authenticate successfully & GetSubscriptionByIdAsync  SubscriptionID :{0}", JsonSerializer.Serialize(subscriptionId));
+                this.TempData["ShowWelcomeScreen"] = false;
+                var oldValue = this.subscriptionService.GetSubscriptionsBySubscriptionId(subscriptionId);
+                var serializedParent = JsonSerializer.Serialize(oldValue);
+                subscriptionDetail = JsonSerializer.Deserialize<SubscriptionResultExtension>(serializedParent);
+                this.logger.LogInformation("serializedParent :{0}", serializedParent);
+                subscriptionDetail.ShowWelcomeScreen = false;
+                subscriptionDetail.SubscriptionStatus = oldValue.SubscriptionStatus;
+                subscriptionDetail.CustomerEmailAddress = oldValue.CustomerEmailAddress;
+                subscriptionDetail.CustomerName = oldValue.CustomerName;
+                var plandetails = this.planRepository.GetById(oldValue.PlanId);
+                subscriptionDetail = this.subscriptionService.GetSubscriptionsBySubscriptionId(subscriptionId);
+                subscriptionDetail.SubscriptionParameters = this.subscriptionService.GetSubscriptionsParametersById(subscriptionId, plandetails.PlanGuid);
+                subscriptionDetail.SubscriptionParameters = this.subscriptionService.GetSubscriptionsParametersById(subscriptionId, plandetails.PlanGuid);
+            }
+
+            return this.View(subscriptionDetail);
+        }
+
+        /// <summary>
+        /// Des the activate subscription.
+        /// </summary>
+        /// <param name="subscriptionId">The subscription identifier.</param>
+        /// <param name="planId">The plan identifier.</param>
+        /// <param name="operation">The operation.</param>
+        /// <returns> The <see cref="IActionResult" />.</returns>
+        public IActionResult DeActivateSubscription(Guid subscriptionId, string planId, string operation)
+        {
+            this.logger.LogInformation("Home Controller / ActivateSubscription subscriptionId:{0} :: planId:{1} :: operation:{2}", subscriptionId, planId, operation);
+            try
+            {
+                SubscriptionResultExtension subscriptionDetail = new SubscriptionResultExtension();
+
+                if (this.User.Identity.IsAuthenticated)
+                {
+                    var userId = this.userService.AddUser(this.GetCurrentUserDetail());
+                    var currentUserId = this.userService.GetUserIdFromEmailAddress(this.CurrentUserEmailAddress);
+                    this.subscriptionService = new SubscriptionService(this.subscriptionRepository, this.planRepository, userId);
+                    this.logger.LogInformation("GetSubscriptionByIdAsync SubscriptionID :{0} :: planID:{1}:: operation:{2}", JsonSerializer.Serialize(subscriptionId), JsonSerializer.Serialize(operation));
+
+                    this.TempData["ShowWelcomeScreen"] = false;
+                    var oldValue = this.subscriptionService.GetSubscriptionsBySubscriptionId(subscriptionId);
+                    var plandetails = this.planRepository.GetById(oldValue.PlanId);
+                    subscriptionDetail = this.subscriptionService.GetSubscriptionsBySubscriptionId(subscriptionId);
+                    subscriptionDetail.ShowWelcomeScreen = false;
+                    subscriptionDetail.CustomerEmailAddress = this.CurrentUserEmailAddress;
+                    subscriptionDetail.CustomerName = this.CurrentUserName;
+                    subscriptionDetail.SubscriptionParameters = this.subscriptionService.GetSubscriptionsParametersById(subscriptionId, plandetails.PlanGuid);
+                }
+
+                return this.View("ActivateSubscription", subscriptionDetail);
+            }
+            catch (Exception ex)
+            {
+                this.logger.LogError(ex, "Error while deactivating subscription");
+                return this.View("Error", ex);
+            }
+        }
+
+        /// <summary>
+        /// Subscriptions the operation.
+        /// </summary>
+        /// <param name="subscriptionId">The subscription identifier.</param>
+        /// <param name="planId">The plan identifier.</param>
+        /// <param name="operation">The operation.</param>
+        /// <param name="numberofProviders">The numberof providers.</param>
+        /// <returns> The <see cref="IActionResult" />.</returns>
+        public IActionResult SubscriptionOperation(Guid subscriptionId, string planId, string operation, int numberofProviders)
+        {
+            this.logger.LogInformation("Home Controller / SubscriptionOperation subscriptionId:{0} :: planId : {1} :: operation:{2} :: NumberofProviders : {3}", JsonSerializer.Serialize(subscriptionId), JsonSerializer.Serialize(planId), JsonSerializer.Serialize(operation), JsonSerializer.Serialize(numberofProviders));
+            try
+            {
+                var userDetails = this.userRepository.GetPartnerDetailFromEmail(this.CurrentUserEmailAddress);
+                var oldValue = this.subscriptionService.GetSubscriptionsBySubscriptionId(subscriptionId);
+                SubscriptionProcessQueueModel queueObject = new SubscriptionProcessQueueModel();
+                if (operation == "Activate")
+                {
+                    if (oldValue.SubscriptionStatus.ToString() != SubscriptionStatusEnumExtension.PendingActivation.ToString())
+                    {
+                        this.subscriptionRepository.UpdateStatusForSubscription(subscriptionId, SubscriptionStatusEnumExtension.PendingActivation.ToString(), true);
+
+                        SubscriptionAuditLogs auditLog = new SubscriptionAuditLogs()
+                        {
+                            Attribute = Convert.ToString(SubscriptionLogAttributes.Status),
+                            SubscriptionId = oldValue.SubscribeId,
+                            NewValue = SubscriptionStatusEnumExtension.PendingActivation.ToString(),
+                            OldValue = oldValue.SubscriptionStatus.ToString(),
+                            CreateBy = userDetails.UserId,
+                            CreateDate = DateTime.Now,
+                        };
+                        this.subscriptionLogRepository.Save(auditLog);
+                    }
+
+                    this.pendingActivationStatusHandlers.Process(subscriptionId);
+                }
+
+                if (operation == "Deactivate")
+                {
+                    this.subscriptionRepository.UpdateStatusForSubscription(subscriptionId, SubscriptionStatusEnumExtension.PendingUnsubscribe.ToString(), true);
+                    SubscriptionAuditLogs auditLog = new SubscriptionAuditLogs()
+                    {
+                        Attribute = Convert.ToString(SubscriptionLogAttributes.Status),
+                        SubscriptionId = oldValue.SubscribeId,
+                        NewValue = SubscriptionStatusEnumExtension.PendingUnsubscribe.ToString(),
+                        OldValue = oldValue.SubscriptionStatus.ToString(),
+                        CreateBy = userDetails.UserId,
+                        CreateDate = DateTime.Now,
+                    };
+                    this.subscriptionLogRepository.Save(auditLog);
+
+                    this.unsubscribeStatusHandlers.Process(subscriptionId);
+                }
+
+                this.notificationStatusHandlers.Process(subscriptionId);
+
+                return this.RedirectToAction(nameof(this.ActivatedMessage));
+            }
+            catch (Exception ex)
+            {
+                this.logger.LogInformation("Message:{0} :: {1}", ex.Message, ex.InnerException);
+                return this.View("Error");
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the <see cref="Microsoft.AspNetCore.Mvc.IActionResult" /> with the specified error.
+        /// </summary>
+        /// <returns>
+        /// The <see cref="IActionResult" />.
+        /// </returns>
+        /// <value>
+        /// The <see cref="Microsoft.AspNetCore.Mvc.IActionResult" />.
+        /// </value>
+        public IActionResult ActivatedMessage()
+        {
+            try
+            {
+                return this.View("ProcessMessage");
+            }
+            catch (Exception ex)
+            {
+                return this.View("Error", ex);
+            }
+        }
 
         /// <summary>
         /// Records the usage.
         /// </summary>
         /// <param name="subscriptionId">The subscription identifier.</param>
-        /// <returns></returns>
+        /// <returns> The <see cref="IActionResult" />.</returns>
         public IActionResult RecordUsage(int subscriptionId)
         {
             this.logger.LogInformation("Home Controller / RecordUsage ");
             try
             {
-                if (Convert.ToBoolean(applicationConfigRepository.GetValuefromApplicationConfig(MainMenuStatusEnum.IsLicenseManagementEnabled.ToString())) == true)
+                if (this.User.Identity.IsAuthenticated)
                 {
-                    this.TempData["ShowLicensesMenu"] = true;
-                }
-                if (User.Identity.IsAuthenticated)
-                {
-                    var subscriptionDetail = subscriptionRepo.Get(subscriptionId);
-                    var allDimensionsList = dimensionsRepository.GetDimensionsFromPlanId(subscriptionDetail.AmpplanId);
+                    var subscriptionDetail = this.subscriptionRepo.Get(subscriptionId);
+                    var allDimensionsList = this.dimensionsRepository.GetDimensionsByPlanId(subscriptionDetail.AmpplanId);
                     SubscriptionUsageViewModel usageViewModel = new SubscriptionUsageViewModel();
                     usageViewModel.SubscriptionDetail = subscriptionDetail;
                     usageViewModel.MeteredAuditLogs = new List<MeteredAuditLogs>();
-                    usageViewModel.MeteredAuditLogs = subscriptionUsageLogsRepository.GetMeteredAuditLogsBySubscriptionId(subscriptionId).OrderByDescending(s => s.CreatedDate).ToList();
+                    usageViewModel.MeteredAuditLogs = this.subscriptionUsageLogsRepository.GetMeteredAuditLogsBySubscriptionId(subscriptionId).OrderByDescending(s => s.CreatedDate).ToList();
                     usageViewModel.DimensionsList = new SelectList(allDimensionsList, "Dimension", "Description");
-                    return View(usageViewModel);
+                    return this.View(usageViewModel);
                 }
                 else
                 {
-                    return RedirectToAction(nameof(Index));
+                    return this.RedirectToAction(nameof(this.Index));
                 }
             }
             catch (Exception ex)
             {
                 this.logger.LogInformation("Message:{0} :: {1}   ", ex.Message, ex.InnerException);
-                return View("Error");
+                return this.View("Error", ex);
+            }
+        }
+
+        /// <summary>
+        /// Get Subscription Details for selected Subscription.
+        /// </summary>
+        /// <param name="subscriptionId">The subscription identifier.</param>
+        /// <returns>
+        /// The <see cref="IActionResult" />.
+        /// </returns>
+        public IActionResult SubscriptionQuantityDetail(Guid subscriptionId)
+        {
+            this.logger.LogInformation("Home Controller / SubscriptionQuantityDetail subscriptionId:{0}", JsonSerializer.Serialize(subscriptionId));
+            try
+            {
+                if (this.User.Identity.IsAuthenticated)
+                {
+                    var subscriptionDetail = this.subscriptionService.GetPartnerSubscription(this.CurrentUserEmailAddress, subscriptionId).FirstOrDefault();
+                    return this.View(subscriptionDetail);
+                }
+                else
+                {
+                    return this.RedirectToAction(nameof(this.Index));
+                }
+            }
+            catch (Exception ex)
+            {
+                this.logger.LogError("Message:{0} :: {1}   ", ex.Message, ex.InnerException);
+                return this.View("Error", ex);
             }
         }
 
@@ -274,41 +524,37 @@
         /// Manages the subscription usage.
         /// </summary>
         /// <param name="subscriptionData">The subscription data.</param>
-        /// <returns></returns>
+        /// <returns> The <see cref="IActionResult" />.</returns>
         [HttpPost]
         public IActionResult ManageSubscriptionUsage(SubscriptionUsageViewModel subscriptionData)
         {
-            this.logger.LogInformation("Home Controller / ManageSubscriptionUsage  subscriptionData: {0}", JsonConvert.SerializeObject(subscriptionData));
+            this.logger.LogInformation("Home Controller / ManageSubscriptionUsage  subscriptionData: {0}", JsonSerializer.Serialize(subscriptionData));
             try
             {
-                if (Convert.ToBoolean(applicationConfigRepository.GetValuefromApplicationConfig(MainMenuStatusEnum.IsLicenseManagementEnabled.ToString())) == true)
-                {
-                    this.TempData["ShowLicensesMenu"] = true;
-                }
                 if (subscriptionData != null && subscriptionData.SubscriptionDetail != null)
                 {
-                    var currentUserDetail = usersRepository.GetPartnerDetailFromEmail(this.CurrentUserEmailAddress);
+                    var currentUserDetail = this.userRepository.GetPartnerDetailFromEmail(this.CurrentUserEmailAddress);
                     var subscriptionUsageRequest = new MeteringUsageRequest()
                     {
                         Dimension = subscriptionData.SelectedDimension,
                         EffectiveStartTime = DateTime.UtcNow,
                         PlanId = subscriptionData.SubscriptionDetail.AmpplanId,
                         Quantity = Convert.ToDouble(subscriptionData.Quantity ?? "0"),
-                        ResourceId = subscriptionData.SubscriptionDetail.AmpsubscriptionId
+                        ResourceId = subscriptionData.SubscriptionDetail.AmpsubscriptionId,
                     };
                     var meteringUsageResult = new MeteringUsageResult();
-                    var requestJson = JsonConvert.SerializeObject(subscriptionUsageRequest);
+                    var requestJson = JsonSerializer.Serialize(subscriptionUsageRequest);
                     var responseJson = string.Empty;
                     try
                     {
                         this.logger.LogInformation("EmitUsageEventAsync");
-                        meteringUsageResult = apiClient.EmitUsageEventAsync(subscriptionUsageRequest).ConfigureAwait(false).GetAwaiter().GetResult();
-                        responseJson = JsonConvert.SerializeObject(meteringUsageResult);
+                        meteringUsageResult = this.billingApiService.EmitUsageEventAsync(subscriptionUsageRequest).ConfigureAwait(false).GetAwaiter().GetResult();
+                        responseJson = JsonSerializer.Serialize(meteringUsageResult);
                         this.logger.LogInformation(responseJson);
                     }
-                    catch (MeteredBillingException mex)
+                    catch (MarketplaceException mex)
                     {
-                        responseJson = JsonConvert.SerializeObject(mex.MeteredBillingErrorDetail);
+                        responseJson = JsonSerializer.Serialize(mex.MeteredBillingErrorDetail);
                         meteringUsageResult.Status = mex.ErrorCode;
                         this.logger.LogInformation(responseJson);
                     }
@@ -321,294 +567,64 @@
                         SubscriptionId = subscriptionData.SubscriptionDetail.Id,
                         SubscriptionUsageDate = DateTime.UtcNow,
                         CreatedBy = currentUserDetail == null ? 0 : currentUserDetail.UserId,
-                        CreatedDate = DateTime.Now
+                        CreatedDate = DateTime.Now,
                     };
-                    subscriptionUsageLogsRepository.Add(newMeteredAuditLog);
+                    this.subscriptionUsageLogsRepository.Save(newMeteredAuditLog);
                 }
             }
             catch (Exception ex)
             {
                 this.logger.LogError(ex, ex.Message);
             }
-            return RedirectToAction(nameof(RecordUsage), new { subscriptionId = subscriptionData.SubscriptionDetail.Id });
-        }
 
-        public IActionResult ActivateSubscription(Guid subscriptionId, string planId)
-        {
-            this.logger.LogInformation("Home Controller / ActivateSubscription subscriptionId:{0} :: planId:{1}", subscriptionId, planId);
-            SubscriptionResult subscriptionDetail = new SubscriptionResult();
-
-            if (User.Identity.IsAuthenticated)
-            {
-                var userId = this.userService.AddPartnerDetail(GetCurrentUserDetail());
-                var currentUserId = this.userService.GetUserIdFromEmailAddress(this.CurrentUserEmailAddress);
-                this.webSubscriptionService = new WebSubscriptionService(this.subscriptionRepo, this.planRepository, userId);
-
-                //this.log.Info("User authenticate successfully");
-                this.logger.LogInformation("User authenticate successfully & GetSubscriptionByIdAsync  SubscriptionID :{0}", JsonConvert.SerializeObject(subscriptionId));
-
-                this.TempData["ShowWelcomeScreen"] = false;
-                var subscriptionData = this.fulfillApiClient.GetSubscriptionByIdAsync(subscriptionId).ConfigureAwait(false).GetAwaiter().GetResult();
-                //var subscribeId = this.webSubscriptionService.AddUpdatePartnerSubscriptions(subscriptionData);
-                var oldValue = this.webSubscriptionService.GetSubscriptionsByScheduleId(subscriptionId);
-
-                var serializedParent = JsonConvert.SerializeObject(subscriptionData);
-                subscriptionDetail = JsonConvert.DeserializeObject<SubscriptionResult>(serializedParent);
-                this.logger.LogInformation("serializedParent :{0}", serializedParent);
-                //subscriptionDetail = (SubscriptionResultExtension)subscriptionData;
-                subscriptionDetail.ShowWelcomeScreen = false;
-                subscriptionDetail.SaasSubscriptionStatus = oldValue.SaasSubscriptionStatus;
-                subscriptionDetail.CustomerEmailAddress = oldValue.CustomerEmailAddress;
-                subscriptionDetail.CustomerName = oldValue.CustomerName;
-            }
-            return this.View(subscriptionDetail);
-        }
-
-        public IActionResult DeActivateSubscription(Guid subscriptionId, string planId, string operation)
-        {
-            this.logger.LogInformation("Home Controller / ActivateSubscription subscriptionId:{0} :: planId:{1} :: operation:{2}", subscriptionId, planId, operation);
-
-            try
-            {
-                if (Convert.ToBoolean(applicationConfigRepository.GetValuefromApplicationConfig(MainMenuStatusEnum.IsLicenseManagementEnabled.ToString())) == true)
-                {
-                    this.TempData["ShowLicensesMenu"] = true;
-                }
-                SubscriptionResultExtension subscriptionDetail = new SubscriptionResultExtension();
-
-                if (User.Identity.IsAuthenticated)
-                {
-                    var userId = this.userService.AddPartnerDetail(GetCurrentUserDetail());
-                    var currentUserId = this.userService.GetUserIdFromEmailAddress(this.CurrentUserEmailAddress);
-                    this.subscriptionService = new SubscriptionService(this.subscriptionRepository, this.planRepository, userId);
-                    this.logger.LogInformation("GetSubscriptionByIdAsync SubscriptionID :{0} :: planID:{1}:: operation:{2}", JsonConvert.SerializeObject(subscriptionId), JsonConvert.SerializeObject(operation));
-
-                    this.TempData["ShowWelcomeScreen"] = false;
-                    var subscriptionData = this.fulfillApiClient.GetSubscriptionByIdAsync(subscriptionId).ConfigureAwait(false).GetAwaiter().GetResult();
-                    var subscribeId = this.subscriptionService.AddUpdatePartnerSubscriptions(subscriptionData);
-                    var oldValue = this.subscriptionService.GetPartnerSubscriptions(CurrentUserEmailAddress, subscriptionId).FirstOrDefault();
-
-                    var serializedParent = JsonConvert.SerializeObject(subscriptionData);
-                    subscriptionDetail = JsonConvert.DeserializeObject<SubscriptionResultExtension>(serializedParent);
-                    //subscriptionDetail = (SubscriptionResult)subscriptionData;
-                    subscriptionDetail.ShowWelcomeScreen = false;
-                    subscriptionDetail.SaasSubscriptionStatus = SubscriptionStatusEnum.Subscribed;
-                    subscriptionDetail.CustomerEmailAddress = this.CurrentUserEmailAddress;
-                    subscriptionDetail.CustomerName = this.CurrentUserName;
-                }
-                return this.View("ActivateSubscription", subscriptionDetail);
-            }
-            catch (Exception ex)
-            {
-                this.logger.LogError(ex, "Error while deactivating subscription");
-                return View("Error");
-            }
-        }
-
-        public IActionResult SubscriptionOperation(Guid subscriptionId, string planId, string operation, int NumberofProviders)
-        {
-            this.logger.LogInformation("Home Controller / SubscriptionOperation subscriptionId:{0} :: planId : {1} :: operation:{2} :: NumberofProviders : {3}", JsonConvert.SerializeObject(subscriptionId), JsonConvert.SerializeObject(planId), JsonConvert.SerializeObject(operation), JsonConvert.SerializeObject(NumberofProviders));
-            try
-            {
-                bool isSuccess = false;
-                if (subscriptionId != default)
-                {
-                    SubscriptionResult subscriptionDetail = new SubscriptionResult();
-                    this.logger.LogInformation("GetPartnerSubscription");
-                    var oldValue = this.webSubscriptionService.GetSubscriptionsByScheduleId(subscriptionId);
-                    this.logger.LogInformation("GetUserIdFromEmailAddress");
-                    var currentUserId = userService.GetUserIdFromEmailAddress(this.CurrentUserEmailAddress);
-
-                if (operation == "Activate")
-                {
-                    var response = this.fulfillApiClient.ActivateSubscriptionAsync(subscriptionId, planId).ConfigureAwait(false).GetAwaiter().GetResult();
-                    this.webSubscriptionService.UpdateStateOfSubscription(subscriptionId, SubscriptionStatusEnum.Subscribed, true);
-
-                        isSuccess = true;
-                        this.logger.LogInformation("GetPartnerSubscription");
-                        this.logger.LogInformation("GetAllSubscriptionPlans");
-                        subscriptionDetail = this.webSubscriptionService.GetSubscriptionsByScheduleId(subscriptionId);
-                        subscriptionDetail.PlanList = this.webSubscriptionService.GetAllSubscriptionPlans();
-                        var subscriptionData = this.fulfillApiClient.GetSubscriptionByIdAsync(subscriptionId).ConfigureAwait(false).GetAwaiter().GetResult();
-                        bool checkIsActive = emailTemplateRepository.GetIsActive(subscriptionDetail.SaasSubscriptionStatus.ToString()).HasValue ? emailTemplateRepository.GetIsActive(subscriptionDetail.SaasSubscriptionStatus.ToString()).Value : false;
-                        this.logger.LogInformation("sendEmail");
-                        if (Convert.ToBoolean(applicationConfigRepository.GetValuefromApplicationConfig(EmailTriggerConfigurationConstants.ISEMAILENABLEDFORSUBSCRIPTIONACTIVATION)) == true)
-                        {
-                            EmailHelper.SendEmail(subscriptionDetail, applicationConfigRepository, emailTemplateRepository);
-                        }
-                    }
-
-                    if (operation == "Deactivate")
-                    {
-                        try
-                        {
-                            this.logger.LogInformation("operation == Deactivate");
-                            this.logger.LogInformation("DeleteSubscriptionAsync");
-                            var response = this.fulfillApiClient.DeleteSubscriptionAsync(subscriptionId, planId).ConfigureAwait(false).GetAwaiter().GetResult();
-                            this.logger.LogInformation("UpdateStateOfSubscription");
-                            this.webSubscriptionService.UpdateStateOfSubscription(subscriptionId, SubscriptionStatusEnum.Unsubscribed, false);
-                            subscriptionDetail = this.webSubscriptionService.GetSubscriptionsByScheduleId(subscriptionId, true);
-                            subscriptionDetail.SaasSubscriptionStatus = SubscriptionStatusEnum.Unsubscribed;
-                            isSuccess = true;
-                            this.logger.LogInformation("GetIsActive");
-                            bool checkIsActive = emailTemplateRepository.GetIsActive(subscriptionDetail.SaasSubscriptionStatus.ToString()).HasValue ? emailTemplateRepository.GetIsActive(subscriptionDetail.SaasSubscriptionStatus.ToString()).Value : false;
-
-                            if (Convert.ToBoolean(applicationConfigRepository.GetValuefromApplicationConfig(EmailTriggerConfigurationConstants.ISEMAILENABLEDFORUNSUBSCRIPTION)) == true)
-                            {
-                                this.logger.LogInformation("SendEmail to {0} :: Template{1} ", JsonConvert.SerializeObject(applicationConfigRepository), JsonConvert.SerializeObject(emailTemplateRepository));
-
-                                EmailHelper.SendEmail(subscriptionDetail, applicationConfigRepository, emailTemplateRepository);
-                            }
-                        }
-                        catch (FulfillmentException fex)
-                        {
-                            this.logger.LogError($"Deactive Subscription plan Error - {fex.Message} with StackTrace- {fex.StackTrace}.");
-                            this.TempData["ErrorMsg"] = fex.Message;
-                        }
-                    }
-
-                    var newValue = this.webSubscriptionService.GetSubscriptionsByScheduleId(subscriptionId, true);
-                    if (isSuccess)
-                    {
-                        if (oldValue != null && newValue != null)
-                        {
-                            SubscriptionAuditLogs auditLog = new SubscriptionAuditLogs()
-                            {
-                                Attribute = Convert.ToString(SubscriptionLogAttributes.Status),
-                                SubscriptionId = newValue.SubscribeId,
-                                NewValue = Convert.ToString(newValue.SaasSubscriptionStatus),
-                                OldValue = Convert.ToString(oldValue.SaasSubscriptionStatus),
-                                CreateBy = currentUserId,
-                                CreateDate = DateTime.Now
-                            };
-                            this.subscriptionLogRepository.Add(auditLog);
-
-                            //auditLog = new SubscriptionAuditLogs()
-                            //{
-                            //    Attribute = Convert.ToString(SubscriptionLogAttributes.ProviderCount),
-                            //    SubscriptionId = newValue.SubscribeId,
-                            //    NewValue = Convert.ToString(newValue.NumberofProviders),
-                            //    OldValue = Convert.ToString(oldValue.NumberofProviders),
-                            //    CreateBy = currentUserId,
-                            //    CreateDate = DateTime.Now
-                            //};
-                            //this.subscriptionLogRepository.Add(auditLog);
-                        }
-                    }
-                }
-                return this.RedirectToAction(nameof(this.ActivatedMessage));
-            }
-            catch (Exception ex)
-            {
-                this.logger.LogInformation("Message:{0} :: {1}", ex.Message, ex.InnerException);
-                return View("Error");
-            }
-        }
-
-        public IActionResult ActivatedMessage()
-        {
-            try
-            {
-                return this.View();
-            }
-            catch (Exception ex)
-            {
-                this.logger.LogInformation("Message:{0} :: {1}", ex.Message, ex.InnerException);
-                return View("Error");
-            }
+            return this.RedirectToAction(nameof(this.RecordUsage), new { subscriptionId = subscriptionData.SubscriptionDetail.Id });
         }
 
         /// <summary>
-        /// Prepares the subscription response.
-        /// </summary>
-        /// <param name="subscription">The subscription.</param>
-        /// <param name="allPlanDetails">All plan details.</param>
-        /// <returns></returns>
-        private SubscriptionResultExtension PrepareSubscriptionResponse(Subscriptions subscription, List<Plans> allPlanDetails)
-        {
-            SubscriptionResultExtension subscritpionDetail = new SubscriptionResultExtension();
-            subscritpionDetail.Id = subscription.AmpsubscriptionId;
-            subscritpionDetail.SubscribeId = subscription.Id;
-            subscritpionDetail.PlanId = string.IsNullOrEmpty(subscription.AmpplanId) ? string.Empty : subscription.AmpplanId;
-            subscritpionDetail.Quantity = subscription.Ampquantity;
-            subscritpionDetail.Name = subscription.Name;
-            subscritpionDetail.SaasSubscriptionStatus = GetSubscriptionStatus(subscription.SubscriptionStatus);
-            subscritpionDetail.IsActiveSubscription = subscription.IsActive ?? false;
-            subscritpionDetail.CustomerName = subscription.User?.FullName;
-            subscritpionDetail.CustomerEmailAddress = subscription.User?.EmailAddress;
-            var existingPlanDetail = allPlanDetails.Where(s => s.PlanId == subscritpionDetail.PlanId).FirstOrDefault();
-            subscritpionDetail.IsMeteringSupported = existingPlanDetail != null ? (existingPlanDetail.IsmeteringSupported ?? false) : false;
-
-            return subscritpionDetail;
-        }
-
-        /// <summary>
-        /// Get All Subscription List for Current Logged in User
+        /// Get All Subscription List for Current Logged in User.
         /// </summary>
         /// <param name="subscriptionId">The subscription identifier.</param>
         /// <returns>
-        /// The <see cref="IActionResult" />
+        /// The <see cref="IActionResult" />.
         /// </returns>
-        public IActionResult SubscriptionDetail(Guid subscriptionId)
+        public IActionResult ViewSubscriptionDetail(Guid subscriptionId)
         {
-            this.logger.LogInformation("Home Controller / SubscriptionDetail subscriptionId:{0}", JsonConvert.SerializeObject(subscriptionId));
+            this.logger.LogInformation("Home Controller / SubscriptionDetail subscriptionId:{0}", JsonSerializer.Serialize(subscriptionId));
             try
             {
-                if (User.Identity.IsAuthenticated)
+                if (this.User.Identity.IsAuthenticated)
                 {
-                    if (Convert.ToBoolean(applicationConfigRepository.GetValuefromApplicationConfig(MainMenuStatusEnum.IsLicenseManagementEnabled.ToString())) == true)
-                    {
-                        this.TempData["ShowLicensesMenu"] = true;
-                    }
-                    var subscriptionDetail = this.subscriptionService.GetSubscriptionsForSubscriptionId(subscriptionId);
+                    var subscriptionDetail = this.subscriptionService.GetSubscriptionsBySubscriptionId(subscriptionId);
                     subscriptionDetail.PlanList = this.subscriptionService.GetAllSubscriptionPlans();
 
                     return this.View(subscriptionDetail);
                 }
                 else
                 {
-                    return RedirectToAction(nameof(Index));
+                    return this.RedirectToAction(nameof(this.Index));
                 }
             }
             catch (Exception ex)
             {
                 this.logger.LogError("Message:{0} :: {1}   ", ex.Message, ex.InnerException);
-                return View("Error");
+                return this.View("Error", ex);
             }
-        }
-
-        /// <summary>
-        /// Gets the subscription status.
-        /// </summary>
-        /// <param name="subscriptionStatus">The subscription status.</param>
-        /// <returns></returns>
-        public SubscriptionStatusEnum GetSubscriptionStatus(string subscriptionStatus)
-        {
-            if (!string.IsNullOrEmpty(subscriptionStatus))
-            {
-                if (subscriptionStatus.Trim() == Convert.ToString(SubscriptionStatusEnum.NotStarted)) return SubscriptionStatusEnum.NotStarted;
-                if (subscriptionStatus.Trim() == Convert.ToString(SubscriptionStatusEnum.PendingFulfillmentStart)) return SubscriptionStatusEnum.PendingFulfillmentStart;
-                if (subscriptionStatus.Trim() == Convert.ToString(SubscriptionStatusEnum.Subscribed)) return SubscriptionStatusEnum.Subscribed;
-                if (subscriptionStatus.Trim() == Convert.ToString(SubscriptionStatusEnum.Unsubscribed)) return SubscriptionStatusEnum.Unsubscribed;
-                if (subscriptionStatus.Trim() == Convert.ToString(SubscriptionStatusEnum.PendingActivation)) return SubscriptionStatusEnum.PendingActivation;
-            }
-            return SubscriptionStatusEnum.NotStarted;
         }
 
         /// <summary>
         /// Privacies this instance.
         /// </summary>
-        /// <returns></returns>
+        /// <returns> The <see cref="IActionResult" />.</returns>
         public IActionResult Privacy()
         {
-            return View();
+            return this.View();
         }
 
         /// <summary>
-        /// The Error
+        /// The Error.
         /// </summary>
         /// <returns>
-        /// The <see cref="IActionResult" />
+        /// The <see cref="IActionResult" />.
         /// </returns>
         [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
         public IActionResult Error()
@@ -621,65 +637,60 @@
         /// Changes the subscription plan.
         /// </summary>
         /// <param name="subscriptionDetail">The subscription detail.</param>
-        /// <returns>Changes subscription plan</returns>
+        /// <returns> IActionResult.</returns>
         [HttpPost]
         public async Task<IActionResult> ChangeSubscriptionPlan(SubscriptionResult subscriptionDetail)
         {
-            this.logger.LogInformation("Home Controller / ChangeSubscriptionPlan  subscriptionDetail:{0}", JsonConvert.SerializeObject(subscriptionDetail));
+            this.logger.LogInformation("Home Controller / ChangeSubscriptionPlan  subscriptionDetail:{0}", JsonSerializer.Serialize(subscriptionDetail));
             try
             {
-                var subscriptionId = new Guid();
-                var planId = string.Empty;
-                if (Convert.ToBoolean(applicationConfigRepository.GetValuefromApplicationConfig(MainMenuStatusEnum.IsLicenseManagementEnabled.ToString())) == true)
-                {
-                    this.TempData["ShowLicensesMenu"] = true;
-                }
-                if (subscriptionDetail != null)
-                {
-                    subscriptionId = subscriptionDetail.Id;
-                    planId = subscriptionDetail.PlanId;
-                }
-
-                if (subscriptionId != default && !string.IsNullOrEmpty(planId))
+                if (subscriptionDetail.Id != default && !string.IsNullOrEmpty(subscriptionDetail.PlanId))
                 {
                     try
                     {
+                        //initiate change plan
                         var currentUserId = this.userService.GetUserIdFromEmailAddress(this.CurrentUserEmailAddress);
-
-                        var jsonResult = await this.fulfillApiClient.ChangePlanForSubscriptionAsync(subscriptionId, planId).ConfigureAwait(false);
-
+                        var jsonResult = await this.fulfillApiService.ChangePlanForSubscriptionAsync(subscriptionDetail.Id, subscriptionDetail.PlanId).ConfigureAwait(false);
                         var changePlanOperationStatus = OperationStatusEnum.InProgress;
+
                         if (jsonResult != null && jsonResult.OperationId != default)
                         {
+                            int _counter = 0;
+
+                            //loop untill the operation status has moved away from inprogress or notstarted, generally this will be the result of webhooks' action aganist this operation
                             while (OperationStatusEnum.InProgress.Equals(changePlanOperationStatus) || OperationStatusEnum.NotStarted.Equals(changePlanOperationStatus))
                             {
-                                var changePlanOperationResult = await this.fulfillApiClient.GetOperationStatusResultAsync(subscriptionId, jsonResult.OperationId).ConfigureAwait(false);
+                                var changePlanOperationResult = await this.fulfillApiService.GetOperationStatusResultAsync(subscriptionDetail.Id, jsonResult.OperationId).ConfigureAwait(false);
                                 changePlanOperationStatus = changePlanOperationResult.Status;
-                                this.logger.LogInformation("Operation Status :  " + changePlanOperationStatus + " For SubscriptionId " + subscriptionId + "Model SubscriptionID): {0} :: planID:{1}", JsonConvert.SerializeObject(subscriptionId), JsonConvert.SerializeObject(planId));
-                                this.applicationLogService.AddApplicationLog("Operation Status :  " + changePlanOperationStatus + " For SubscriptionId " + subscriptionId);
+                                
+                                this.logger.LogInformation($"Plan Change Progress. SubscriptionId: {subscriptionDetail.Id} ToPlan: {subscriptionDetail.PlanId} UserId: {currentUserId} OperationId: {jsonResult.OperationId} Operationstatus: { changePlanOperationStatus }.");
+                                await this.applicationLogService.AddApplicationLog($"Plan Change Progress. SubscriptionId: {subscriptionDetail.Id} ToPlan: {subscriptionDetail.PlanId} UserId: {currentUserId} OperationId: {jsonResult.OperationId} Operationstatus: { changePlanOperationStatus }.").ConfigureAwait(false);
+
+                                //wait and check every 5secs
+                                await Task.Delay(5000);
+                                _counter++;
+                                if (_counter > 100)
+                                {
+                                    //if loop has been executed for more than 100 times then break, to avoid infinite loop just in case
+                                    break;
+                                }
                             }
 
-                            var oldValue = this.subscriptionService.GetSubscriptionsForSubscriptionId(subscriptionId);
-                            this.subscriptionService.UpdateSubscriptionPlan(subscriptionId, planId);
-                            this.logger.LogInformation("Plan Successfully Changed.");
-                            this.applicationLogService.AddApplicationLog("Plan Successfully Changed.");
-
-                            if (oldValue != null)
+                            if (changePlanOperationStatus == OperationStatusEnum.Succeeded)
                             {
-                                SubscriptionAuditLogs auditLog = new SubscriptionAuditLogs()
-                                {
-                                    Attribute = Convert.ToString(SubscriptionLogAttributes.Plan),
-                                    SubscriptionId = oldValue.SubscribeId,
-                                    NewValue = planId,
-                                    OldValue = oldValue.PlanId,
-                                    CreateBy = currentUserId,
-                                    CreateDate = DateTime.Now
-                                };
-                                this.subscriptionLogRepository.Add(auditLog);
+                                this.logger.LogInformation($"Plan Change Success. SubscriptionId: {subscriptionDetail.Id} ToPlan : {subscriptionDetail.PlanId} UserId: {currentUserId} OperationId: {jsonResult.OperationId}.");
+                                await this.applicationLogService.AddApplicationLog($"Plan Change Success. SubscriptionId: {subscriptionDetail.Id} ToPlan: {subscriptionDetail.PlanId} UserId: {currentUserId} OperationId: {jsonResult.OperationId}.").ConfigureAwait(false);
+                            }
+                            else
+                            {
+                                this.logger.LogInformation($"Plan Change Failed. SubscriptionId: {subscriptionDetail.Id} ToPlan : {subscriptionDetail.PlanId} UserId: {currentUserId} OperationId: {jsonResult.OperationId} Operation status { changePlanOperationStatus }.");
+                                await this.applicationLogService.AddApplicationLog($"Plan Change Failed. SubscriptionId: {subscriptionDetail.Id} ToPlan: {subscriptionDetail.PlanId} UserId: {currentUserId} OperationId: {jsonResult.OperationId} Operation status { changePlanOperationStatus }.").ConfigureAwait(false);
+                                
+                                throw new MarketplaceException($"Plan change operation failed with operation status {changePlanOperationStatus}. Check if the updates are allowed in the App config \"AcceptSubscriptionUpdates\" key or db application log for more information.");
                             }
                         }
                     }
-                    catch (FulfillmentException fex)
+                    catch (MarketplaceException fex)
                     {
                         this.TempData["ErrorMsg"] = fex.Message;
                     }
@@ -690,8 +701,150 @@
             catch (Exception ex)
             {
                 this.logger.LogError("Message:{0} :: {1}   ", ex.Message, ex.InnerException);
-                return View("Error");
+                return this.View("Error", ex);
             }
+        }
+
+        /// <summary>
+        /// Changes the quantity plan.
+        /// </summary>
+        /// <param name="subscriptionDetail">The subscription detail.</param>
+        /// <returns>Changes subscription quantity.</returns>
+        [HttpPost]
+        public async Task<IActionResult> ChangeSubscriptionQuantity(SubscriptionResult subscriptionDetail)
+        {
+            this.logger.LogInformation("Home Controller / ChangeSubscriptionPlan  subscriptionDetail:{0}", JsonSerializer.Serialize(subscriptionDetail));
+            if (this.User.Identity.IsAuthenticated)
+            {
+                try
+                {
+                    if (subscriptionDetail != null && subscriptionDetail.Id != default && subscriptionDetail.Quantity > 0)
+                    {
+                        try
+                        {
+                            //initiate change quantity
+                            var currentUserId = this.userService.GetUserIdFromEmailAddress(this.CurrentUserEmailAddress);
+                            var jsonResult = await this.fulfillApiService.ChangeQuantityForSubscriptionAsync(subscriptionDetail.Id, subscriptionDetail.Quantity).ConfigureAwait(false);
+                            var changeQuantityOperationStatus = OperationStatusEnum.InProgress;
+
+                            if (jsonResult != null && jsonResult.OperationId != default)
+                            {
+                                int _counter = 0;
+                                
+                                //loop untill the operation status has moved away from inprogress or notstarted, generally this will be the result of webhooks' action aganist this operation
+                                while (OperationStatusEnum.InProgress.Equals(changeQuantityOperationStatus) || OperationStatusEnum.NotStarted.Equals(changeQuantityOperationStatus))
+                                {
+                                    var changeQuantityOperationResult = await this.fulfillApiService.GetOperationStatusResultAsync(subscriptionDetail.Id, jsonResult.OperationId).ConfigureAwait(false);
+                                    changeQuantityOperationStatus = changeQuantityOperationResult.Status;
+
+                                    this.logger.LogInformation($"Quantity Change Progress. SubscriptionId: {subscriptionDetail.Id} ToQuantity: {subscriptionDetail.Quantity} UserId: {currentUserId} OperationId: {jsonResult.OperationId} Operationstatus: { changeQuantityOperationStatus }.");
+                                    await this.applicationLogService.AddApplicationLog($"Quantity Change Progress. SubscriptionId: {subscriptionDetail.Id} ToQuantity: {subscriptionDetail.Quantity} UserId: {currentUserId} OperationId: {jsonResult.OperationId} Operationstatus: { changeQuantityOperationStatus }.").ConfigureAwait(false);
+
+                                    //wait and check every 5secs
+                                    await Task.Delay(5000);
+                                    _counter++;
+                                    if (_counter > 100)
+                                    {
+                                        //if loop has been executed for more than 100 times then break, to avoid infinite loop just in case
+                                        break;
+                                    }
+                                }
+                                
+                                if (changeQuantityOperationStatus == OperationStatusEnum.Succeeded)
+                                {
+                                    this.logger.LogInformation($"Quantity Change Success. SubscriptionId: {subscriptionDetail.Id} ToQuantity: {subscriptionDetail.Quantity} UserId: {currentUserId} OperationId: {jsonResult.OperationId}.");
+                                    await this.applicationLogService.AddApplicationLog($"Quantity Change Success. SubscriptionId: {subscriptionDetail.Id} ToQuantity: {subscriptionDetail.Quantity} UserId: {currentUserId} OperationId: {jsonResult.OperationId}.").ConfigureAwait(false);
+                                }
+                                else
+                                {
+                                    this.logger.LogInformation($"Quantity Change Failed. SubscriptionId: {subscriptionDetail.Id} ToQuantity: {subscriptionDetail.Quantity} UserId: {currentUserId} OperationId: {jsonResult.OperationId} Operationstatus: { changeQuantityOperationStatus }.");
+                                    await this.applicationLogService.AddApplicationLog($"Quantity Change Failed. SubscriptionId: {subscriptionDetail.Id} ToQuantity: {subscriptionDetail.Quantity} UserId: {currentUserId} OperationId: {jsonResult.OperationId} Operationstatus: { changeQuantityOperationStatus }.").ConfigureAwait(false);
+                                    
+                                    throw new MarketplaceException($"Quantity Change operation failed with operation status {changeQuantityOperationStatus}. Check if the updates are allowed in the App config \"AcceptSubscriptionUpdates\" key or db application log for more information.");
+                                }
+                            }
+                        }
+                        catch (MarketplaceException fex)
+                        {
+                            this.TempData["ErrorMsg"] = fex.Message;
+                            this.logger.LogError("Message:{0} :: {1}   ", fex.Message, fex.InnerException);
+                        }
+                    }
+
+                    return this.RedirectToAction(nameof(this.Subscriptions));
+                }
+                catch (Exception ex)
+                {
+                    this.logger.LogError("Message:{0} :: {1}   ", ex.Message, ex.InnerException);
+                    return this.View("Error", ex);
+                }
+            }
+            else
+            {
+                return this.RedirectToAction(nameof(this.Index));
+            }
+        }
+
+        [HttpPost]
+        public IActionResult FetchAllSubscriptions()
+        {
+            var currentUserId = this.userService.GetUserIdFromEmailAddress(this.CurrentUserEmailAddress);
+
+            try
+            {
+                this.subscriptionService = new SubscriptionService(this.subscriptionRepository, this.planRepository, currentUserId);
+
+                //get all subscirptions from api
+                var subscriptions = this.fulfillApiService.GetAllSubscriptionAsync().GetAwaiter().GetResult();
+                foreach (SubscriptionResult subscription in subscriptions)
+                {
+                    if(this.subscriptionRepo.GetById(subscription.Id) == null)
+                    {
+                        //room for improvement to use AddRange rather making mulitple db trips
+                        Offers offers = new Offers()
+                        {
+                            OfferId = subscription.OfferId,
+                            OfferName = subscription.OfferId,
+                            UserId = currentUserId,
+                            CreateDate = DateTime.Now,
+                            OfferGuid = Guid.NewGuid(),
+                        };
+                        Guid newOfferId = this.offersRepository.Add(offers);  // add offer
+
+                        var subscriptionPlanDetail = this.fulfillApiService.GetAllPlansForSubscriptionAsync(subscription.Id).ConfigureAwait(false).GetAwaiter().GetResult();
+                        subscriptionPlanDetail.ForEach(x =>
+                        {
+                            x.OfferId = newOfferId;
+                            x.PlanGUID = Guid.NewGuid();
+                        });
+                        this.subscriptionService.AddPlanDetailsForSubscription(subscriptionPlanDetail); // add plans
+
+                        //var subscriptionData = this.fulfillApiService.GetSubscriptionByIdAsync(subscription.Id).ConfigureAwait(false).GetAwaiter().GetResult();
+                        var subscribeId = this.subscriptionService.AddOrUpdatePartnerSubscriptions(subscription);  // add subscription
+                        if (subscribeId > 0 && subscription.SaasSubscriptionStatus == SubscriptionStatusEnum.PendingFulfillmentStart)
+                        {
+                            SubscriptionAuditLogs auditLog = new SubscriptionAuditLogs()
+                            {
+                                Attribute = Convert.ToString(SubscriptionLogAttributes.Status),
+                                SubscriptionId = subscribeId,
+                                NewValue = SubscriptionStatusEnum.PendingFulfillmentStart.ToString(),
+                                OldValue = "None",
+                                CreateBy = currentUserId,
+                                CreateDate = DateTime.Now,
+                            };
+                            this.subscriptionLogRepository.Save(auditLog);  // add audit log
+                        }
+                    }
+
+                }
+            }
+            catch (Exception ex)
+            {
+                this.logger.LogError("Message:{0} :: {1}   ", ex.Message, ex.InnerException);
+                return this.View("Error", ex);
+            }
+
+            return this.RedirectToAction(nameof(this.Subscriptions));
         }
     }
 }

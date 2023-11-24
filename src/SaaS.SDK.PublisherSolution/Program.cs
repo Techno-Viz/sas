@@ -5,7 +5,7 @@ namespace Microsoft.Marketplace.Saas.Web
     using Microsoft.Extensions.Logging;
 
     /// <summary>
-    /// Program
+    /// Program.
     /// </summary>
     public class Program
     {
@@ -26,6 +26,11 @@ namespace Microsoft.Marketplace.Saas.Web
             logger.LogInformation("Publisher portal initialized!!");
         }
 
+        /// <summary>
+        /// Creates the host builder.
+        /// </summary>
+        /// <param name="args">The arguments.</param>
+        /// <returns> host bulder.</returns>
         public static IHostBuilder CreateHostBuilder(string[] args) =>
     Host.CreateDefaultBuilder(args)
         .ConfigureLogging(logging =>
@@ -35,6 +40,7 @@ namespace Microsoft.Marketplace.Saas.Web
         })
         .ConfigureWebHostDefaults(webBuilder =>
         {
+            webBuilder.UseUrls("https://*:5081", "http://*:5080");
             webBuilder.UseStartup<Startup>();
         });
     }

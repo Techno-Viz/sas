@@ -1,10 +1,17 @@
-﻿using Microsoft.Marketplace.SaasKit.Client.DataAccess.Entities;
-using System;
-
-namespace Microsoft.Marketplace.SaasKit.Client.DataAccess.Contracts
+﻿namespace Microsoft.Marketplace.SaasKit.Client.DataAccess.Contracts
 {
-    public interface IApplicationLogRepository : IDisposable
+    using System.Threading.Tasks;
+    using Microsoft.Marketplace.SaasKit.Client.DataAccess.Entities;
+
+    /// <summary>
+    /// Repository to access application log entries.
+    /// </summary>
+    public interface IApplicationLogRepository
     {
-        void AddApplicationLogs(ApplicationLog logDetail);
+        /// <summary>
+        /// Adds the log.
+        /// </summary>
+        /// <param name="logDetail">The log detail.</param>
+        Task<int> AddLog(ApplicationLog logDetail);
     }
 }

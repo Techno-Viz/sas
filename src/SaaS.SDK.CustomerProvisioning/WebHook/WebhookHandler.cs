@@ -1,90 +1,187 @@
-﻿using Microsoft.Marketplace.SaasKit.Models;
-using Microsoft.Marketplace.SaasKit.Client.DataAccess.Contracts;
-using Microsoft.Marketplace.SaasKit.Client.DataAccess.Entities;
-using Microsoft.Marketplace.SaasKit.WebHook;
-using Microsoft.Marketplace.SaasKit.Client.Models;
-using Microsoft.Marketplace.SaasKit.Client.Services;
-using System;
-using System.Threading.Tasks;
-
-namespace Microsoft.Marketplace.SaasKit.Client.WebHook
+﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License. See LICENSE file in the project root for license information.
+namespace Microsoft.Marketplace.SaaS.SDK.Services.WebHook
 {
+    using System;
+    using System.Threading.Tasks;
+    using Microsoft.Extensions.Logging;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Contracts;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Models;
+    using Microsoft.Marketplace.SaaS.SDK.Services.Services;
+    using Microsoft.Marketplace.SaaS.SDK.Services.StatusHandlers;
+    using Microsoft.Marketplace.SaasKit.Client.DataAccess.Contracts;
+    using Microsoft.Marketplace.SaasKit.Client.DataAccess.Entities;
+
     /// <summary>
-    /// Handler For the WebHook Actions
+    /// Handler For the WebHook Actions.
     /// </summary>
     /// <seealso cref="Microsoft.Marketplace.SaasKit.WebHook.IWebhookHandler" />
     public class WebHookHandler : IWebhookHandler
     {
         /// <summary>
-        /// The application log repository
+        /// The application log repository.
         /// </summary>
-        private readonly IApplicationLogRepository ApplicationLogRepository;
+        private readonly IApplicationLogRepository applicationLogRepository;
 
         /// <summary>
-        /// The subscriptions repository
+        /// The subscriptions repository.
         /// </summary>
-        private readonly ISubscriptionsRepository SubscriptionsRepository;
+        private readonly ISubscriptionsRepository subscriptionsRepository;
 
         /// <summary>
-        /// The plan repository
+        /// The plan repository.
         /// </summary>
-        private readonly IPlansRepository PlanRepository;
+        private readonly IPlansRepository planRepository;
 
         /// <summary>
-        /// The subscription service
+        /// The subscription service.
         /// </summary>
         private readonly SubscriptionService subscriptionService;
 
         /// <summary>
-        /// The application log service
+        /// The application log service.
         /// </summary>
         private readonly ApplicationLogService applicationLogService;
 
         /// <summary>
-        /// The subscriptions log repository
+        /// The application configuration repository.
         /// </summary>
-        private readonly ISubscriptionLogRepository SubscriptionsLogRepository;
+        private readonly IApplicationConfigRepository applicationConfigRepository;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="WebHookHandler"/> class.
+        /// The email template repository.
+        /// </summary>
+        private readonly IEmailTemplateRepository emailTemplateRepository;
+
+        /// <summary>
+        /// The plan events mapping repository.
+        /// </summary>
+        private readonly IPlanEventsMappingRepository planEventsMappingRepository;
+
+        /// <summary>
+        /// The events repository.
+        /// </summary>
+        private readonly IEventsRepository eventsRepository;
+
+        /// <summary>
+        /// The fulfill API client.
+        /// </summary>
+        private readonly IFulfillmentApiService fulfillApiService;
+
+        /// <summary>
+        /// The users repository.
+        /// </summary>
+        private readonly IUsersRepository usersRepository;
+
+        /// <summary>
+        /// The subscriptions log repository.
+        /// </summary>
+        private readonly ISubscriptionLogRepository subscriptionsLogRepository;
+
+        private readonly ISubscriptionStatusHandler notificationStatusHandlers;
+
+        private readonly ILoggerFactory loggerFactory;
+
+        private readonly IEmailService emailService;
+
+        private readonly IOffersRepository offersRepository;
+
+        private readonly IOfferAttributesRepository offersAttributeRepository;
+
+        private const string AcceptSubscriptionUpdates = "AcceptSubscriptionUpdates";
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="WebHookHandler" /> class.
         /// </summary>
         /// <param name="applicationLogRepository">The application log repository.</param>
         /// <param name="subscriptionsLogRepository">The subscriptions log repository.</param>
         /// <param name="subscriptionsRepository">The subscriptions repository.</param>
         /// <param name="planRepository">The plan repository.</param>
-        public WebHookHandler(IApplicationLogRepository applicationLogRepository, ISubscriptionLogRepository subscriptionsLogRepository, ISubscriptionsRepository subscriptionsRepository, IPlansRepository planRepository)
+        /// <param name="offersAttributeRepository">The offers attribute repository.</param>
+        /// <param name="offersRepository">The offers repository.</param>
+        /// <param name="fulfillApiClient">The fulfill API client.</param>
+        /// <param name="usersRepository">The users repository.</param>
+        /// <param name="loggerFactory">The logger factory.</param>
+        /// <param name="emailService">The email service.</param>
+        /// <param name="eventsRepository">The events repository.</param>
+        /// <param name="applicationConfigRepository">The application configuration repository.</param>
+        /// <param name="emailTemplateRepository">The email template repository.</param>
+        /// <param name="planEventsMappingRepository">The plan events mapping repository.</param>
+        public WebHookHandler(IApplicationLogRepository applicationLogRepository, ISubscriptionLogRepository subscriptionsLogRepository, ISubscriptionsRepository subscriptionsRepository, IPlansRepository planRepository, IOfferAttributesRepository offersAttributeRepository, IOffersRepository offersRepository, IFulfillmentApiService fulfillApiService, IUsersRepository usersRepository, ILoggerFactory loggerFactory, IEmailService emailService, IEventsRepository eventsRepository, IApplicationConfigRepository applicationConfigRepository, IEmailTemplateRepository emailTemplateRepository, IPlanEventsMappingRepository planEventsMappingRepository)
         {
-            ApplicationLogRepository = applicationLogRepository;
-            SubscriptionsRepository = subscriptionsRepository;
-            PlanRepository = planRepository;
-            SubscriptionsLogRepository = subscriptionsLogRepository;
-            applicationLogService = new ApplicationLogService(ApplicationLogRepository);
-            subscriptionService = new SubscriptionService(SubscriptionsRepository, PlanRepository);
+            this.applicationLogRepository = applicationLogRepository;
+            this.subscriptionsRepository = subscriptionsRepository;
+            this.planRepository = planRepository;
+            this.subscriptionsLogRepository = subscriptionsLogRepository;
+            this.applicationLogService = new ApplicationLogService(this.applicationLogRepository);
+            this.subscriptionService = new SubscriptionService(this.subscriptionsRepository, this.planRepository);
+            this.emailService = emailService;
+            this.loggerFactory = loggerFactory;
+            this.usersRepository = usersRepository;
+            this.eventsRepository = eventsRepository;
+            this.offersAttributeRepository = offersAttributeRepository;
+            this.fulfillApiService = fulfillApiService;
+            this.applicationConfigRepository = applicationConfigRepository;
+            this.emailTemplateRepository = emailTemplateRepository;
+            this.planEventsMappingRepository = planEventsMappingRepository;
+            this.offersRepository = offersRepository;
+            this.notificationStatusHandlers = new NotificationStatusHandler(
+                                                                        fulfillApiService,
+                                                                        planRepository,
+                                                                        applicationConfigRepository,
+                                                                        emailTemplateRepository,
+                                                                        planEventsMappingRepository,
+                                                                        offersAttributeRepository,
+                                                                        eventsRepository,
+                                                                        subscriptionsRepository,
+                                                                        usersRepository,
+                                                                        offersRepository,
+                                                                        emailService,
+                                                                        this.loggerFactory.CreateLogger<NotificationStatusHandler>());
         }
+
         /// <summary>
         /// Changes the plan asynchronous.
         /// </summary>
         /// <param name="payload">The payload.</param>
+        /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
         public async Task ChangePlanAsync(WebhookPayload payload)
         {
-            var oldValue = subscriptionService.GetSubscriptionsForSubscriptionId(payload.SubscriptionId);
-
-            subscriptionService.UpdateSubscriptionPlan(payload.SubscriptionId, payload.PlanId);
-            applicationLogService.AddApplicationLog("Plan Successfully Changed.");
-
-            if (oldValue != null)
+            var oldValue = this.subscriptionService.GetSubscriptionsBySubscriptionId(payload.SubscriptionId);
+            SubscriptionAuditLogs auditLog = new SubscriptionAuditLogs()
             {
-                SubscriptionAuditLogs auditLog = new SubscriptionAuditLogs()
-                {
-                    Attribute = Convert.ToString(SubscriptionLogAttributes.Plan),
-                    SubscriptionId = oldValue.SubscribeId,
-                    NewValue = payload.PlanId,
-                    OldValue = oldValue.PlanId,
-                    CreateBy = null,
-                    CreateDate = DateTime.Now
-                };
-                SubscriptionsLogRepository.Add(auditLog);
+                Attribute = Convert.ToString(SubscriptionLogAttributes.Plan),
+                SubscriptionId = oldValue?.SubscribeId,
+                OldValue = oldValue?.PlanId,
+                CreateBy = null,
+                CreateDate = DateTime.Now,
+            };
+
+            //gets the user setting from appconfig, if key doesnt exist, add to control the behavior.
+            //_acceptSubscriptionUpdates should be true and subscription should be in db to accept subscription updates
+            var _acceptSubscriptionUpdates = Convert.ToBoolean(this.applicationConfigRepository.GetValueByName(AcceptSubscriptionUpdates));
+            if (_acceptSubscriptionUpdates && oldValue != null)
+            {
+                this.subscriptionService.UpdateSubscriptionPlan(payload.SubscriptionId, payload.PlanId);
+                await this.applicationLogService.AddApplicationLog("Plan Successfully Changed.").ConfigureAwait(false);
+                auditLog.NewValue = payload.PlanId;
             }
+            else
+            {
+                var patchOperation = await fulfillApiService.PatchOperationStatusResultAsync(payload.SubscriptionId, payload.OperationId, SaaS.Models.UpdateOperationStatusEnum.Failure);
+                if (patchOperation != null && patchOperation.Status != 200)
+                {
+                    await this.applicationLogService.AddApplicationLog($"Plan Change operation PATCH failed with statuscode {patchOperation.Status} {patchOperation.ReasonPhrase}.").ConfigureAwait(false);
+                    //partner trying to fail update operation from customer but PATCH on operation didnt successed, hence throwing an error
+                    throw new Exception(patchOperation.ReasonPhrase);
+                }
+
+                await this.applicationLogService.AddApplicationLog("Plan Change Request Rejected Successfully.").ConfigureAwait(false);
+                auditLog.NewValue = oldValue?.PlanId;
+            }
+
+            this.subscriptionsLogRepository.Save(auditLog);
+            
             await Task.CompletedTask;
         }
 
@@ -92,45 +189,138 @@ namespace Microsoft.Marketplace.SaasKit.Client.WebHook
         /// Changes the quantity asynchronous.
         /// </summary>
         /// <param name="payload">The payload.</param>
-        /// <returns></returns>
-        /// <exception cref="NotImplementedException"></exception>
-        public Task ChangeQuantityAsync(WebhookPayload payload)
+        /// <returns>
+        /// Change QuantityAsync.
+        /// </returns>
+        /// <exception cref="NotImplementedException"> Exception.</exception>
+        public async Task ChangeQuantityAsync(WebhookPayload payload)
         {
-            throw new NotImplementedException();
+            var oldValue = this.subscriptionService.GetSubscriptionsBySubscriptionId(payload.SubscriptionId);
+            SubscriptionAuditLogs auditLog = new SubscriptionAuditLogs()
+            {
+                Attribute = Convert.ToString(SubscriptionLogAttributes.Quantity),
+                SubscriptionId = oldValue?.SubscribeId,
+                OldValue = oldValue?.Quantity.ToString(),
+                CreateBy = null,
+                CreateDate = DateTime.Now,
+            };
+
+            //gets the user setting from appconfig, if key doesnt exist, add to control the behavior.
+            //_acceptSubscriptionUpdates should be true and subscription should be in db to accept subscription updates
+            var _acceptSubscriptionUpdates = Convert.ToBoolean(this.applicationConfigRepository.GetValueByName(AcceptSubscriptionUpdates));
+            if (_acceptSubscriptionUpdates && oldValue != null)
+            {
+                this.subscriptionService.UpdateSubscriptionQuantity(payload.SubscriptionId, payload.Quantity);
+                await this.applicationLogService.AddApplicationLog("Quantity Successfully Changed.").ConfigureAwait(false);
+                auditLog.NewValue = payload.Quantity.ToString();
+            }
+            else
+            {
+                var patchOperation = await fulfillApiService.PatchOperationStatusResultAsync(payload.SubscriptionId, payload.OperationId, SaaS.Models.UpdateOperationStatusEnum.Failure);
+                if (patchOperation != null && patchOperation.Status != 200)
+                {
+                    await this.applicationLogService.AddApplicationLog($"Quantity Change operation PATCH failed with status statuscode {patchOperation.Status} {patchOperation.ReasonPhrase}.").ConfigureAwait(false);
+                    //partner trying to fail update operation from customer but PATCH on operation didnt succeced, hence throwing an error
+                    throw new Exception(patchOperation.ReasonPhrase);
+                }
+
+                await this.applicationLogService.AddApplicationLog("Quantity Change Request Rejected Successfully.").ConfigureAwait(false);
+                auditLog.NewValue = oldValue?.Quantity.ToString();
+            }
+
+            this.subscriptionsLogRepository.Save(auditLog); 
+
+            await Task.CompletedTask;
         }
 
         /// <summary>
-        /// Reinstated the asynchronous.
+        /// Reinstated is followed by Suspend.
+        /// This is called when customer fixed their billing issues and partner can choose to reinstate the suspened subscription to subscribed.
+        /// And resume the software access to the customer.
         /// </summary>
         /// <param name="payload">The payload.</param>
-        /// <returns></returns>
-        /// <exception cref="NotImplementedException"></exception>
-        public Task ReinstatedAsync(WebhookPayload payload)
+        /// <returns> Exception.</returns>
+        /// <exception cref="NotImplementedException"> Not Implemented Exception. </exception>
+        public async Task ReinstatedAsync(WebhookPayload payload)
         {
-            throw new NotImplementedException();
+            var oldValue = this.subscriptionService.GetSubscriptionsBySubscriptionId(payload.SubscriptionId);
+            SubscriptionAuditLogs auditLog = new SubscriptionAuditLogs()
+            {
+                Attribute = Convert.ToString(SubscriptionLogAttributes.Status),
+                SubscriptionId = oldValue?.SubscribeId,
+                OldValue = Convert.ToString(oldValue?.SubscriptionStatus),
+                CreateBy = null,
+                CreateDate = DateTime.Now,
+            };
+
+            //gets the user setting from appconfig, if key doesnt exist, add to control the behavior.
+            //_acceptSubscriptionUpdates should be true and subscription should be in db to accept subscription updates
+            var _acceptSubscriptionUpdates = Convert.ToBoolean(this.applicationConfigRepository.GetValueByName(AcceptSubscriptionUpdates));
+            if (_acceptSubscriptionUpdates && oldValue != null)
+            {
+                this.subscriptionService.UpdateStateOfSubscription(payload.SubscriptionId, SubscriptionStatusEnumExtension.Subscribed.ToString(), false);
+                await this.applicationLogService.AddApplicationLog("Reinstated Successfully.").ConfigureAwait(false);
+                auditLog.NewValue = Convert.ToString(SubscriptionStatusEnum.Subscribed);
+                
+            }
+            else
+            {
+                var patchOperation = await fulfillApiService.PatchOperationStatusResultAsync(payload.SubscriptionId, payload.OperationId, SaaS.Models.UpdateOperationStatusEnum.Failure);
+                if (patchOperation != null && patchOperation.Status != 200)
+                {
+                    await this.applicationLogService.AddApplicationLog($"Reinstate operation PATCH failed with status statuscode {patchOperation.Status} {patchOperation.ReasonPhrase}.").ConfigureAwait(false);
+                    //partner trying to fail update operation from customer but PATCH on operation didnt succeced, hence throwing an error
+                    throw new Exception(patchOperation.ReasonPhrase);
+                }
+
+                await this.applicationLogService.AddApplicationLog("Reinstate Change Request Rejected Successfully.").ConfigureAwait(false);
+                auditLog.NewValue = Convert.ToString(oldValue?.SubscriptionStatus);
+            }
+
+            this.subscriptionsLogRepository.Save(auditLog); 
+
+            await Task.CompletedTask;
         }
 
         /// <summary>
         /// Suspended the asynchronous.
         /// </summary>
         /// <param name="payload">The payload.</param>
-        /// <returns></returns>
-        /// <exception cref="NotImplementedException"></exception>
-        public Task SuspendedAsync(WebhookPayload payload)
+        /// <returns> Exception.</returns>
+        /// <exception cref="NotImplementedException"> Implemented Exception.</exception>
+        public async Task SuspendedAsync(WebhookPayload payload)
         {
-            throw new NotImplementedException();
+            var oldValue = this.subscriptionService.GetSubscriptionsBySubscriptionId(payload.SubscriptionId);
+            this.subscriptionService.UpdateStateOfSubscription(payload.SubscriptionId, SubscriptionStatusEnumExtension.Suspend.ToString(), false);
+            await this.applicationLogService.AddApplicationLog("Offer Successfully Suspended.").ConfigureAwait(false);
+
+            if (oldValue != null)
+            {
+                SubscriptionAuditLogs auditLog = new SubscriptionAuditLogs()
+                {
+                    Attribute = Convert.ToString(SubscriptionLogAttributes.Status),
+                    SubscriptionId = oldValue.SubscribeId,
+                    NewValue = Convert.ToString(SubscriptionStatusEnum.Suspended),
+                    OldValue = Convert.ToString(oldValue.SubscriptionStatus),
+                    CreateBy = null,
+                    CreateDate = DateTime.Now,
+                };
+                this.subscriptionsLogRepository.Save(auditLog);
+            }
+
+            await Task.CompletedTask;
         }
 
         /// <summary>
         /// Unsubscribed the asynchronous.
         /// </summary>
         /// <param name="payload">The payload.</param>
+        /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
         public async Task UnsubscribedAsync(WebhookPayload payload)
         {
-            var oldValue = subscriptionService.GetSubscriptionsForSubscriptionId(payload.SubscriptionId);
-
-            subscriptionService.UpdateStateOfSubscription(payload.SubscriptionId, SubscriptionStatusEnum.Unsubscribed, false);
-            applicationLogService.AddApplicationLog("Offer Successfully UnSubscribed.");
+            var oldValue = this.subscriptionService.GetSubscriptionsBySubscriptionId(payload.SubscriptionId);
+            this.subscriptionService.UpdateStateOfSubscription(payload.SubscriptionId, SubscriptionStatusEnumExtension.Unsubscribed.ToString(), false);
+            await this.applicationLogService.AddApplicationLog("Offer Successfully UnSubscribed.").ConfigureAwait(false);
 
             if (oldValue != null)
             {
@@ -139,12 +329,27 @@ namespace Microsoft.Marketplace.SaasKit.Client.WebHook
                     Attribute = Convert.ToString(SubscriptionLogAttributes.Status),
                     SubscriptionId = oldValue.SubscribeId,
                     NewValue = Convert.ToString(SubscriptionStatusEnum.Unsubscribed),
-                    OldValue = Convert.ToString(oldValue.SaasSubscriptionStatus),
+                    OldValue = Convert.ToString(oldValue.SubscriptionStatus),
                     CreateBy = null,
-                    CreateDate = DateTime.Now
+                    CreateDate = DateTime.Now,
                 };
-                SubscriptionsLogRepository.Add(auditLog);
+                this.subscriptionsLogRepository.Save(auditLog);
             }
+
+            this.notificationStatusHandlers.Process(payload.SubscriptionId);
+
+            await Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Report unknow action from the webhook the asynchronous.
+        /// </summary>
+        /// <param name="payload">The payload.</param>
+        /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
+        public async Task UnknownActionAsync(WebhookPayload payload)
+        {
+            await this.applicationLogService.AddApplicationLog("Offer Received an unknow action: " + payload.Action).ConfigureAwait(false);
+
             await Task.CompletedTask;
         }
     }
